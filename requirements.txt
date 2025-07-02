@@ -1,0 +1,10 @@
+flask
+flask-cors
+requests
+langchain
+langchain-openai
+langchain-core
+langgraph
+pydantic
+python-dotenv
+typing-extensions
