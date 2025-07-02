@@ -5,6 +5,8 @@ SAP Agent 測試腳本
 """
 
 import os
+import queue
+import threading
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -107,9 +109,6 @@ def test_sap_agent():
 
 def test_streaming():
     """測試串流功能"""
-    import queue
-    import threading
-
     print("\n🚀 測試串流功能...")
 
     config = SAPAgentConfig(
