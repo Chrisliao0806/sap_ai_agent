@@ -779,7 +779,9 @@ class SAPAgent:
 
                 if not missing_fields:
                     # 資訊完整，直接創建請購單
-                    logger.info("All required information collected - Creating purchase request")
+                    logger.info(
+                        "All required information collected - Creating purchase request"
+                    )
 
                     # 準備 API 調用的資料
                     api_data_for_creation = {
@@ -791,11 +793,15 @@ class SAPAgent:
                         "department": updated_data.get("department", "未指定部門"),
                         "reason": updated_data.get("reason", "業務需求"),
                         "urgent": updated_data.get("urgent", False),
-                        "expected_delivery_date": updated_data.get("expected_delivery_date", ""),
+                        "expected_delivery_date": updated_data.get(
+                            "expected_delivery_date", ""
+                        ),
                     }
 
                     # 實際調用 API 創建請購單
-                    api_result = self.api_client.create_purchase_request(api_data_for_creation)
+                    api_result = self.api_client.create_purchase_request(
+                        api_data_for_creation
+                    )
 
                     if api_result.get("status") == "success":
                         return {
@@ -844,22 +850,24 @@ class SAPAgent:
             }
 
     def handle_purchase_request(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """處理請購單相關（重新設計）"""
+        """處理請購單相關（完全依賴 LLM 智能識別）"""
         logger.info("HANDLE PURCHASE REQUEST")
 
         question = state["formatted_question"]
-        original_question = state["question"]  # 使用原始問題，可能包含更多資訊
+        original_question = state["question"]
         history = self._format_history_to_string(state.get("chat_history"))
 
         # 檢查是否是創建請購單的請求
         if any(
-            keyword in question for keyword in ["創建", "申請", "新", "購買", "訂購", "買"]
+            keyword in question
+            for keyword in ["創建", "申請", "新", "購買", "訂購", "買"]
         ) or any(
-            keyword in original_question for keyword in ["想要買", "要買", "購買", "申請", "採購"]
+            keyword in original_question
+            for keyword in ["想要買", "要買", "購買", "申請", "採購"]
         ):
             logger.info("Starting purchase request creation process")
 
-            # 使用 LLM 分析並提取初始資訊，同時使用原始問題和格式化問題
+            # 使用 LLM 分析並提取初始資訊
             try:
                 info_collection_prompt = ChatPromptTemplate.from_messages(
                     [
@@ -869,12 +877,18 @@ class SAPAgent:
                 )
 
                 info_chain = info_collection_prompt | self.llm | StrOutputParser()
-                
+
                 # 合併原始問題和格式化問題，提供更多上下文
-                combined_input = f"原始問題: {original_question}\n格式化問題: {question}"
-                
+                combined_input = (
+                    f"原始問題: {original_question}\n格式化問題: {question}"
+                )
+
                 response = info_chain.invoke(
-                    {"existing_data": "{}", "user_input": combined_input, "history": history}
+                    {
+                        "existing_data": "{}",
+                        "user_input": combined_input,
+                        "history": history,
+                    }
                 )
 
                 logger.info(f"Info extraction response from LLM: {response}")
@@ -883,25 +897,10 @@ class SAPAgent:
                     extracted_info = json.loads(response.strip())
                     logger.info(f"Successfully parsed extracted info: {extracted_info}")
 
-                    # 如果沒有提取到 product_name，嘗試手動解析
-                    if not extracted_info.get("product_name"):
-                        # 嘗試從問題中提取產品名稱
-                        if "macbook" in original_question.lower():
-                            if "air" in original_question.lower():
-                                if "m4" in original_question.lower():
-                                    extracted_info["product_name"] = "MacBook Air M4"
-                                else:
-                                    extracted_info["product_name"] = "MacBook Air"
-                            elif "pro" in original_question.lower():
-                                extracted_info["product_name"] = "MacBook Pro"
-                            else:
-                                extracted_info["product_name"] = "MacBook"
-                        
-                        # 確保有基本的數量
-                        if not extracted_info.get("quantity"):
-                            extracted_info["quantity"] = 1
-
-                    logger.info(f"Final extracted info after manual parsing: {extracted_info}")
+                    # 確保基本的數量設定（如果 LLM 沒有提取到）
+                    if not extracted_info.get("quantity") and extracted_info.get("product_name"):
+                        extracted_info["quantity"] = 1
+                        logger.info("Set default quantity to 1")
 
                     # 檢查是否有足夠的必要資訊
                     required_fields = [
@@ -919,26 +918,32 @@ class SAPAgent:
 
                     if not missing_fields:
                         # 資訊完整，直接創建請購單
-                        logger.info("All required information collected in initial request - Creating purchase request")
-                        
+                        logger.info(
+                            "All required information collected in initial request - Creating purchase request"
+                        )
+
                         # 準備 API 調用的資料
                         api_data_for_creation = {
                             "product_name": extracted_info["product_name"],
-                            "category": extracted_info.get("category", "3C產品"),
+                            "category": extracted_info.get("category", "一般產品"),
                             "quantity": int(extracted_info["quantity"]),
                             "unit_price": float(extracted_info["unit_price"]),
                             "requester": extracted_info["requester"],
                             "department": extracted_info.get("department", "未指定部門"),
                             "reason": extracted_info.get("reason", "業務需求"),
                             "urgent": extracted_info.get("urgent", False),
-                            "expected_delivery_date": extracted_info.get("expected_delivery_date", ""),
+                            "expected_delivery_date": extracted_info.get(
+                                "expected_delivery_date", ""
+                            ),
                         }
-                        
+
                         # 實際調用 API 創建請購單
                         logger.info(f"Calling API with data: {api_data_for_creation}")
-                        api_result = self.api_client.create_purchase_request(api_data_for_creation)
+                        api_result = self.api_client.create_purchase_request(
+                            api_data_for_creation
+                        )
                         logger.info(f"API result: {api_result}")
-                        
+
                         if api_result.get("status") == "success":
                             return {
                                 "agent_type": "purchase_request_created",
@@ -968,59 +973,20 @@ class SAPAgent:
                         }
 
                 except json.JSONDecodeError as e:
-                    logger.warning(f"JSON parsing failed: {e}, response was: {response}")
-                    # JSON 解析失敗，嘗試手動提取基本資訊
-                    extracted_info = {}
-                    
-                    # 手動提取產品名稱
-                    if "macbook" in original_question.lower():
-                        if "air" in original_question.lower():
-                            if "m4" in original_question.lower():
-                                extracted_info["product_name"] = "MacBook Air M4"
-                        else:
-                            extracted_info["product_name"] = "MacBook Air"
-                    elif "pro" in original_question.lower():
-                        extracted_info["product_name"] = "MacBook Pro"
-                    else:
-                        extracted_info["product_name"] = "MacBook"
-                    extracted_info["quantity"] = 1
-                    
-                    if extracted_info:
-                        # 有基本資訊，進入收集模式
-                        required_fields = [
-                            "product_name",
-                            "quantity",
-                            "unit_price",
-                            "requester",
-                            "department",
-                        ]
-                        missing_fields = [
-                            field
-                            for field in required_fields
-                            if not extracted_info.get(field)
-                        ]
-                        
-                        return {
-                            "agent_type": "purchase_request_incomplete",
-                            "api_data": {
-                                "action": "incomplete",
-                                "missing_fields": missing_fields,
-                                "current_data": extracted_info,
-                            },
-                            "purchase_request_state": "collecting_info",
-                            "pending_purchase_data": extracted_info,
-                        }
-                    else:
-                        # 完全沒有資訊，返回指導
-                        return {
-                            "agent_type": "purchase_request_guide",
-                            "api_data": {
-                                "action": "guide",
-                                "message": "請提供以下資訊以創建請購單：產品名稱、數量、預估單價、申請人、部門",
-                            },
-                            "purchase_request_state": "collecting_info",
-                            "pending_purchase_data": {},
-                        }
+                    logger.warning(
+                        f"JSON parsing failed: {e}, response was: {response}"
+                    )
+                    # JSON 解析失敗，進入引導模式
+                    return {
+                        "agent_type": "purchase_request_guide",
+                        "api_data": {
+                            "action": "guide",
+                            "message": "請提供以下資訊以創建請購單：產品名稱、數量、預估單價、申請人、部門",
+                            "llm_response": response,  # 保留 LLM 的原始回應供調試
+                        },
+                        "purchase_request_state": "collecting_info",
+                        "pending_purchase_data": {},
+                    }
 
             except Exception as e:
                 logger.error(f"Error in initial info extraction: {e}")
@@ -1094,48 +1060,60 @@ class SAPAgent:
                     if agent_type == "purchase_request_created":
                         # 請購單創建成功
                         if api_data and api_data.get("status") == "success":
-                            request_id = api_data.get("data", {}).get("request_id", "未知")
+                            request_id = api_data.get("data", {}).get(
+                                "request_id", "未知"
+                            )
                             generation = f"✅ 請購單創建成功！\n\n請購單編號：{request_id}\n狀態：待審核\n\n您可以使用請購單編號追蹤審核進度。如有任何問題，請聯繫相關部門主管。"
                         else:
-                            generation = "❌ 請購單創建失敗，請稍後再試或聯繫系統管理員。"
-                    
+                            generation = (
+                                "❌ 請購單創建失敗，請稍後再試或聯繫系統管理員。"
+                            )
+
                     elif agent_type == "purchase_request_incomplete":
                         # 需要更多資訊
                         missing_fields = api_data.get("missing_fields", [])
                         current_data = api_data.get("current_data", {})
-                        
+
                         field_names = {
                             "product_name": "產品名稱",
-                            "quantity": "數量", 
+                            "quantity": "數量",
                             "unit_price": "預估單價",
                             "requester": "申請人",
-                            "department": "部門"
+                            "department": "部門",
                         }
-                        
-                        missing_field_names = [field_names.get(field, field) for field in missing_fields]
-                        
+
+                        missing_field_names = [
+                            field_names.get(field, field) for field in missing_fields
+                        ]
+
                         current_info = ""
                         if current_data:
                             current_info = "\n\n目前已收集到的資訊：\n"
                             for key, value in current_data.items():
                                 if value:
-                                    current_info += f"- {field_names.get(key, key)}：{value}\n"
-                        
+                                    current_info += (
+                                        f"- {field_names.get(key, key)}：{value}\n"
+                                    )
+
                         generation = f"請提供以下必要資訊以完成請購單申請：\n\n"
                         for field_name in missing_field_names:
                             generation += f"• {field_name}\n"
                         generation += current_info
                         generation += "\n請提供缺少的資訊，例如：\n申請人：張三\n部門：IT部門\n預估單價：50000"
-                    
+
                     elif agent_type == "purchase_request_guide":
                         # 引導使用者
                         generation = "🛒 歡迎使用請購單申請系統！\n\n要創建請購單，請提供以下資訊：\n\n• 產品名稱（必要）\n• 數量（必要）\n• 預估單價（必要）\n• 申請人（必要）\n• 部門（必要）\n• 申請原因（選填）\n• 預期交付日期（選填）\n\n您可以按照以下格式提供：\n申請人 產品名稱 數量 價格 用途\n\n例如：\n廖柏瑜 MacBook Air M4 1 34900 工作需求"
-                    
+
                     elif agent_type == "purchase_request_error":
                         # 錯誤處理
-                        error_msg = api_data.get("message", "未知錯誤") if api_data else "系統錯誤"
+                        error_msg = (
+                            api_data.get("message", "未知錯誤")
+                            if api_data
+                            else "系統錯誤"
+                        )
                         generation = f"❌ 請購單處理發生錯誤：{error_msg}\n\n請檢查輸入資訊是否正確，或稍後再試。如問題持續，請聯繫系統管理員。"
-                    
+
                     else:
                         # 其他請購單相關操作（查詢、列表等）
                         generation = self.purchase_request_chain.invoke(
