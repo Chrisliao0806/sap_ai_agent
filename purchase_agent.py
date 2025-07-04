@@ -2,26 +2,24 @@
 SAP 請購系統 AI Agent
 
 這個系統的主要功能：
-1. 接收使用者的請購需求
-2. 呼叫採購歷史 API 分析歷史資料
-3. 使用 LLM 推薦合適的產品規格
-4. 創建請購單並透過 API 提交
+1. 接收使用者的對話輸入，判斷意圖和狀態
+2. 根據狀態提供相應的回應和服務
+3. 引導使用者完成請購流程
+4. 防止偏離採購主題的對話
 """
 
-import os
 import json
 import requests
-import queue
 import logging
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from langchain_openai import ChatOpenAI
-from langgraph.graph import START, END, StateGraph
 
 # 導入自定義模組
-from choose_state import PurchaseRequestState
+from choose_state import ConversationState, PurchaseRequestState
 from prompts import PurchasePrompts
 
 # 設定日誌
@@ -39,10 +37,12 @@ class PurchaseAgentConfig:
     temperature: float = 0.3
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
+    default_requester: str = "系統使用者"
+    default_department: str = "IT部門"
 
 
-class PurchaseAgent:
-    """請購系統 AI Agent"""
+class ConversationalPurchaseAgent:
+    """對話式請購系統 AI Agent"""
 
     def __init__(self, config: PurchaseAgentConfig):
         self.config = config
@@ -53,235 +53,275 @@ class PurchaseAgent:
             max_tokens=config.max_tokens,
             temperature=config.temperature,
         )
-        self._stream_queue: Optional[queue.Queue] = None
-        self._setup_prompts()
         self._setup_chains()
-        self._setup_workflow()
-
-    def _setup_prompts(self):
-        """設定各種提示模板"""
-        self.analyze_request_prompt = PurchasePrompts.get_analyze_request_prompt()
-        self.recommend_product_prompt = PurchasePrompts.get_recommend_product_prompt()
-        self.create_order_prompt = PurchasePrompts.get_create_order_prompt()
+        self._session_states: Dict[str, Dict] = {}  # 儲存會話狀態
 
     def _setup_chains(self):
         """設定 LangChain 鏈"""
-        self.analyze_chain = self.analyze_request_prompt | self.llm | StrOutputParser()
+        self.intent_chain = (
+            PurchasePrompts.get_intent_classification_prompt()
+            | self.llm
+            | JsonOutputParser()
+        )
+        self.analyze_chain = (
+            PurchasePrompts.get_analyze_request_prompt() | self.llm | StrOutputParser()
+        )
         self.recommend_chain = (
-            self.recommend_product_prompt | self.llm | StrOutputParser()
+            PurchasePrompts.get_recommend_product_prompt()
+            | self.llm
+            | StrOutputParser()
+        )
+        self.adjust_chain = (
+            PurchasePrompts.get_adjustment_prompt() | self.llm | StrOutputParser()
         )
         self.create_order_chain = (
-            self.create_order_prompt | self.llm | JsonOutputParser()
+            PurchasePrompts.get_create_order_prompt() | self.llm | JsonOutputParser()
+        )
+        self.guidance_chain = (
+            PurchasePrompts.get_guidance_prompt() | self.llm | StrOutputParser()
         )
 
-    def _setup_workflow(self):
-        """設定工作流程"""
-        workflow = StateGraph(PurchaseRequestState)
+    def _get_session_state(self, session_id: str) -> Dict:
+        """獲取會話狀態"""
+        if session_id not in self._session_states:
+            self._session_states[session_id] = {
+                "conversation_state": ConversationState.INITIAL,
+                "user_request": "",
+                "purchase_history": [],
+                "current_recommendation": None,
+                "confirmed_order": None,
+                "chat_history": [],
+                "user_context": {
+                    "requester": self.config.default_requester,
+                    "department": self.config.default_department,
+                },
+            }
+        return self._session_states[session_id]
 
-        # 添加節點
-        workflow.add_node("analyze_request", self.analyze_request)
-        workflow.add_node("fetch_history", self.fetch_purchase_history)
-        workflow.add_node("recommend_product", self.recommend_product)
-        workflow.add_node("create_purchase_order", self.create_purchase_order)
-        workflow.add_node("submit_order", self.submit_purchase_order)
-        workflow.add_node("final_response", self.generate_final_response)
+    def _update_session_state(self, session_id: str, updates: Dict):
+        """更新會話狀態"""
+        state = self._get_session_state(session_id)
+        state.update(updates)
+        self._session_states[session_id] = state
 
-        # 設定邊緣和條件
-        workflow.add_edge(START, "analyze_request")
-        workflow.add_edge("analyze_request", "fetch_history")
-        workflow.add_edge("fetch_history", "recommend_product")
-        workflow.add_conditional_edges(
-            "recommend_product",
-            self.check_user_approval,
-            {
-                "approved": "create_purchase_order",
-                "rejected": "recommend_product",
-                "needs_clarification": "recommend_product",
-            },
-        )
-        workflow.add_edge("create_purchase_order", "submit_order")
-        workflow.add_edge("submit_order", "final_response")
-        workflow.add_edge("final_response", END)
+    def _add_to_chat_history(self, session_id: str, role: str, content: str):
+        """添加到對話歷史"""
+        state = self._get_session_state(session_id)
+        state["chat_history"].append({"role": role, "content": content})
+        if len(state["chat_history"]) > 20:  # 保持最近20條對話
+            state["chat_history"] = state["chat_history"][-20:]
 
-        self.workflow = workflow.compile()
-
-    def attach_stream_queue(self, q: queue.Queue):
-        """附加串流佇列"""
-        self._stream_queue = q
-
-    def _stream_text(self, text: str):
-        """串流文字到佇列"""
-        if self._stream_queue:
-            for char in text:
-                self._stream_queue.put(char)
-
-    def analyze_request(self, state: PurchaseRequestState) -> Dict[str, Any]:
-        """分析使用者請購需求"""
-        logger.info("分析使用者請購需求")
+    def _classify_intent(self, user_input: str, session_id: str) -> Dict:
+        """分類使用者意圖"""
+        state = self._get_session_state(session_id)
 
         try:
-            analysis = self.analyze_chain.invoke(
-                {"user_request": state["user_request"]}
+            chat_history_str = "\n".join(
+                [
+                    f"{msg['role']}: {msg['content']}"
+                    for msg in state["chat_history"][-5:]  # 最近5條對話
+                ]
             )
 
-            self._stream_text(f"📋 需求分析：\n{analysis}\n\n")
+            intent_result = self.intent_chain.invoke(
+                {
+                    "current_state": state["conversation_state"],
+                    "user_input": user_input,
+                    "chat_history": chat_history_str,
+                }
+            )
 
-            return {"current_step": "需求分析完成", "analysis": analysis}
-        except requests.RequestException as e:
-            logger.error("需求分析失敗: %s", e)
-            return {"current_step": "需求分析失敗", "error": str(e)}
-        except ValueError as e:
-            logger.error("需求分析失敗: %s", e)
-            return {"current_step": "需求分析失敗", "error": str(e)}
+            return intent_result
+        except Exception as e:
+            logger.error(f"意圖分類失敗: {e}")
+            return {
+                "intent": "unclear",
+                "next_state": "initial",
+                "is_purchase_related": False,
+                "guidance_message": "抱歉，我無法理解您的需求。請告訴我您想要採購什麼產品？",
+            }
 
-    def fetch_purchase_history(self, state: PurchaseRequestState) -> Dict[str, Any]:
+    def _fetch_purchase_history(self) -> List[Dict]:
         """獲取採購歷史資料"""
-        logger.info("獲取採購歷史資料")
-
         try:
-            # 呼叫採購歷史 API
             response = requests.get(
                 f"{self.config.api_base_url}/api/purchase-history", timeout=10
             )
 
             if response.status_code == 200:
                 data = response.json()
-                purchase_history = data.get("data", [])
-
-                self._stream_text(
-                    f"📊 已獲取 {len(purchase_history)} 筆採購歷史資料\n\n"
-                )
-
-                return {
-                    "purchase_history": purchase_history,
-                    "current_step": "採購歷史獲取完成",
-                }
+                return data.get("data", [])
             else:
-                logger.error("API 呼叫失敗: %s", response.status_code)
-                return {
-                    "purchase_history": [],
-                    "current_step": "採購歷史獲取失敗",
-                    "error": f"API 呼叫失敗: {response.status_code}",
-                }
+                logger.error(f"獲取採購歷史失敗: {response.status_code}")
+                return []
         except requests.RequestException as e:
-            logger.error("獲取採購歷史失敗: %s", e)
-            return {
-                "purchase_history": [],
-                "current_step": "採購歷史獲取失敗",
-                "error": str(e),
-            }
+            logger.error(f"獲取採購歷史失敗: {e}")
+            return []
 
-    def recommend_product(self, state: PurchaseRequestState) -> Dict[str, Any]:
-        """推薦產品規格"""
-        logger.info("推薦產品規格")
-
+    def _handle_new_request(self, user_input: str, session_id: str) -> str:
+        """處理新的請購需求"""
         try:
-            # 格式化採購歷史資料
-            history_text = ""
-            for item in state.get("purchase_history", [])[:10]:  # 限制前10筆
-                history_text += f"""
-                產品: {item.get("product_name", "N/A")}
-                類別: {item.get("category", "N/A")}
-                供應商: {item.get("supplier", "N/A")}
-                數量: {item.get("quantity", "N/A")}
-                單價: NT$ {item.get("unit_price", "N/A"):,}
-                購買日期: {item.get("purchase_date", "N/A")}
-                部門: {item.get("department", "N/A")}
-                ---
-                """
+            # 分析需求
+            analysis = self.analyze_chain.invoke({"user_request": user_input})
 
+            # 獲取採購歷史
+            purchase_history = self._fetch_purchase_history()
+
+            # 生成推薦
+            history_text = self._format_purchase_history(purchase_history[:10])
             recommendation = self.recommend_chain.invoke(
+                {"user_request": user_input, "purchase_history": history_text}
+            )
+
+            # 更新會話狀態
+            self._update_session_state(
+                session_id,
                 {
-                    "user_request": state["user_request"],
+                    "conversation_state": ConversationState.WAITING_CONFIRMATION,
+                    "user_request": user_input,
+                    "purchase_history": purchase_history,
+                    "current_recommendation": recommendation,
+                },
+            )
+
+            return f"📋 需求分析完成\n\n{analysis}\n\n🎯 產品推薦\n\n{recommendation}"
+
+        except Exception as e:
+            logger.error(f"處理新請求失敗: {e}")
+            return f"抱歉，處理您的請求時發生錯誤：{str(e)}\n請重新描述您的採購需求。"
+
+    def _handle_confirmation(self, user_input: str, session_id: str) -> str:
+        """處理確認推薦"""
+        user_input_lower = user_input.lower().strip()
+
+        # 判斷使用者是否確認
+        if any(
+            keyword in user_input_lower
+            for keyword in ["同意", "確認", "好", "可以", "沒問題", "ok"]
+        ):
+            # 創建請購單
+            return self._create_and_show_order(session_id)
+        elif any(
+            keyword in user_input_lower
+            for keyword in ["不同意", "不要", "不行", "調整", "修改", "改"]
+        ):
+            # 進入調整狀態
+            self._update_session_state(
+                session_id, {"conversation_state": ConversationState.ADJUSTING}
+            )
+            return "請告訴我您希望如何調整這個推薦？例如：\n- 調整數量\n- 更換產品\n- 修改規格\n- 更換供應商\n- 調整預算"
+        else:
+            return "請明確回答是否同意此推薦？\n- 輸入「同意」或「確認」來接受推薦\n- 輸入「不同意」或「調整」來修改推薦"
+
+    def _handle_adjustment(self, user_input: str, session_id: str) -> str:
+        """處理調整推薦"""
+        try:
+            state = self._get_session_state(session_id)
+
+            # 調整推薦
+            history_text = self._format_purchase_history(state["purchase_history"][:10])
+            adjusted_recommendation = self.adjust_chain.invoke(
+                {
+                    "current_recommendation": state["current_recommendation"],
+                    "adjustment_request": user_input,
                     "purchase_history": history_text,
                 }
             )
 
-            self._stream_text(f"🎯 產品推薦：\n{recommendation}\n\n")
-            self._stream_text("請確認是否同意此推薦？(輸入 '同意' 或 '不同意')\n")
+            # 更新狀態
+            self._update_session_state(
+                session_id,
+                {
+                    "conversation_state": ConversationState.WAITING_CONFIRMATION,
+                    "current_recommendation": adjusted_recommendation,
+                },
+            )
 
-            return {"recommendations": recommendation, "current_step": "等待使用者確認"}
-        except requests.RequestException as e:
-            logger.error("產品推薦失敗: %s", e)
-            return {
-                "recommendations": "",
-                "current_step": "產品推薦失敗",
-                "error": str(e),
-            }
-        except ValueError as e:
-            logger.error("產品推薦失敗: %s", e)
-            return {
-                "recommendations": "",
-                "current_step": "產品推薦失敗",
-                "error": str(e),
-            }
+            return f"🔄 推薦已調整\n\n{adjusted_recommendation}"
 
-    def check_user_approval(self, state: PurchaseRequestState) -> str:
-        """檢查使用者是否同意推薦"""
-        # 這裡需要等待使用者輸入，實際實作中可能需要不同的機制
-        # 為了演示，我們假設使用者同意
-        return "approved"
+        except Exception as e:
+            logger.error(f"調整推薦失敗: {e}")
+            return f"抱歉，調整推薦時發生錯誤：{str(e)}\n請重新描述您的調整需求。"
 
-    def create_purchase_order(self, state: PurchaseRequestState) -> Dict[str, Any]:
-        """創建請購單"""
-        logger.info("創建請購單")
-
+    def _create_and_show_order(self, session_id: str) -> str:
+        """創建並顯示請購單"""
         try:
-            # 預設使用者資訊（實際應用中應該從認證系統獲取）
-            user_info = {"requester": "系統使用者", "department": "IT部門"}
+            state = self._get_session_state(session_id)
 
+            # 創建請購單
             order_data = self.create_order_chain.invoke(
                 {
-                    "recommendation": state["recommendations"],
-                    "user_info": json.dumps(user_info, ensure_ascii=False),
+                    "recommendation": state["current_recommendation"],
+                    "user_info": json.dumps(state["user_context"], ensure_ascii=False),
                 }
             )
 
-            self._stream_text(
-                f"📋 請購單已創建：\n{json.dumps(order_data, ensure_ascii=False, indent=2)}\n\n"
-            )
-
-            return {"purchase_order": order_data, "current_step": "請購單創建完成"}
-        except requests.RequestException as e:
-            logger.error("請購單創建失敗: %s", e)
-            return {
-                "purchase_order": {},
-                "current_step": "請購單創建失敗",
-                "error": str(e),
-            }
-        except ValueError as e:
-            logger.error("請購單創建失敗: %s", e)
-            return {
-                "purchase_order": {},
-                "current_step": "請購單創建失敗",
-                "error": str(e),
-            }
-
-    def submit_purchase_order(self, state: PurchaseRequestState) -> Dict[str, Any]:
-        """提交請購單到 API"""
-        logger.info("提交請購單")
-
-        try:
-            order_data = state["purchase_order"]
-
-            # 處理可能的嵌套結構 - 如果 AI 生成了包含 purchase_order 列表的結構
+            # 處理可能的嵌套結構
             if isinstance(order_data, dict) and "purchase_order" in order_data:
-                # 取第一個請購單項目
-                if (
-                    isinstance(order_data["purchase_order"], list)
-                    and len(order_data["purchase_order"]) > 0
-                ):
+                if isinstance(order_data["purchase_order"], list):
                     order_data = order_data["purchase_order"][0]
                 else:
                     order_data = order_data["purchase_order"]
 
-            # 確保日期格式正確（如果是2023年的日期，更新為2025年）
+            # 確保日期格式正確
             if "expected_delivery_date" in order_data:
                 delivery_date = order_data["expected_delivery_date"]
                 if delivery_date.startswith("2023"):
                     order_data["expected_delivery_date"] = delivery_date.replace(
                         "2023", "2025"
                     )
+
+            # 更新狀態
+            self._update_session_state(
+                session_id,
+                {
+                    "conversation_state": ConversationState.CONFIRMING_ORDER,
+                    "confirmed_order": order_data,
+                },
+            )
+
+            # 格式化顯示請購單
+            order_display = self._format_order_display(order_data)
+
+            return f"📋 請購單已創建\n\n{order_display}\n\n請確認請購單資訊是否正確？\n- 輸入「確認提交」來提交請購單\n- 輸入「修改」來調整請購單\n- 輸入「取消」來取消請購"
+
+        except Exception as e:
+            logger.error(f"創建請購單失敗: {e}")
+            return f"抱歉，創建請購單時發生錯誤：{str(e)}\n請重新確認推薦。"
+
+    def _handle_order_confirmation(self, user_input: str, session_id: str) -> str:
+        """處理請購單確認"""
+        user_input_lower = user_input.lower().strip()
+
+        if any(
+            keyword in user_input_lower
+            for keyword in ["確認提交", "提交", "確認", "送出"]
+        ):
+            return self._submit_order(session_id)
+        elif any(keyword in user_input_lower for keyword in ["修改", "調整", "更改"]):
+            self._update_session_state(
+                session_id,
+                {"conversation_state": ConversationState.WAITING_CONFIRMATION},
+            )
+            return "請告訴我您要修改請購單的哪個部分？我會重新為您調整推薦。"
+        elif any(keyword in user_input_lower for keyword in ["取消", "不要", "放棄"]):
+            self._update_session_state(
+                session_id,
+                {
+                    "conversation_state": ConversationState.INITIAL,
+                    "current_recommendation": None,
+                    "confirmed_order": None,
+                },
+            )
+            return "已取消本次請購。如果您有其他採購需求，請隨時告訴我。"
+        else:
+            return "請明確回答：\n- 輸入「確認提交」來提交請購單\n- 輸入「修改」來調整請購單\n- 輸入「取消」來取消請購"
+
+    def _submit_order(self, session_id: str) -> str:
+        """提交請購單"""
+        try:
+            state = self._get_session_state(session_id)
+            order_data = state["confirmed_order"]
 
             # 呼叫請購單 API
             response = requests.post(
@@ -295,120 +335,147 @@ class PurchaseAgent:
                 api_response = response.json()
                 request_id = api_response.get("request_id")
 
-                self._stream_text("✅ 請購單提交成功！\n")
-                self._stream_text(f"請購單號：{request_id}\n")
-                self._stream_text(
-                    f"狀態：{api_response.get('data', {}).get('status', 'N/A')}\n\n"
+                # 更新狀態
+                self._update_session_state(
+                    session_id,
+                    {
+                        "conversation_state": ConversationState.COMPLETED,
+                        "api_response": api_response,
+                    },
                 )
 
-                return {"api_response": api_response, "current_step": "請購單提交成功"}
+                # 計算總金額
+                total_amount = order_data.get("unit_price", 0) * order_data.get(
+                    "quantity", 0
+                )
+
+                success_msg = f"""✅ 請購單提交成功！
+                
+📄 請購單詳情：
+- 請購單號：{request_id}
+- 產品：{order_data.get("product_name", "N/A")}
+- 數量：{order_data.get("quantity", 0)}
+- 預估金額：NT$ {total_amount:,}
+- 狀態：{api_response.get("data", {}).get("status", "N/A")}
+
+您可以使用請購單號查詢審核進度。
+
+如果您還有其他採購需求，請隨時告訴我。"""
+
+                return success_msg
             else:
-                logger.error("API 提交失敗: %s", response.status_code)
-                return {
-                    "api_response": {"error": f"API 提交失敗: {response.status_code}"},
-                    "current_step": "請購單提交失敗",
-                }
+                logger.error(f"API 提交失敗: {response.status_code}")
+                return f"❌ 請購單提交失敗\n\nAPI 錯誤：{response.status_code}\n請稍後重試或聯絡系統管理員。"
+
         except requests.RequestException as e:
-            logger.error("請購單提交失敗: %s", e)
-            return {"api_response": {"error": str(e)}, "current_step": "請購單提交失敗"}
+            logger.error(f"提交請購單失敗: {e}")
+            return (
+                f"❌ 請購單提交失敗\n\n網路錯誤：{str(e)}\n請檢查網路連線或稍後重試。"
+            )
 
-    def generate_final_response(self, state: PurchaseRequestState) -> Dict[str, Any]:
-        """生成最終回應"""
-        logger.info("生成最終回應")
-
-        # 檢查是否有成功的 API 回應
-        api_response = state.get("api_response", {})
-        purchase_order = state.get("purchase_order", {})
-
-        logger.info("API 回應: %s", api_response)
-        logger.info("請購單: %s", purchase_order)
-
-        if api_response.get("request_id"):
-            request_id = api_response["request_id"]
-            product_name = purchase_order.get("product_name", "N/A")
-            quantity = purchase_order.get("quantity", 0)
-            unit_price = purchase_order.get("unit_price", 0)
-            total_amount = unit_price * quantity if unit_price and quantity else 0
-
-            final_msg = f"""
-            🎉 請購流程完成！
-
-            📄 請購單詳情：
-            - 請購單號：{request_id}
-            - 產品：{product_name}
-            - 數量：{quantity}
-            - 預估金額：NT$ {total_amount:,}
-
-            您可以使用請購單號查詢審核進度。
-            """
-        else:
-            # 檢查是否有錯誤訊息
-            error_info = ""
-            if api_response.get("error"):
-                error_info = f"\n錯誤詳情：{api_response['error']}"
-
-            final_msg = f"""
-            ❌ 請購流程未完成
-
-            請檢查以下可能的問題：
-            1. 網路連線是否正常
-            2. API 服務是否正在運行
-            3. 請購資料是否完整{error_info}
-
-            請重新嘗試或聯絡系統管理員。
-            """
-
-        self._stream_text(final_msg)
-
-        if self._stream_queue:
-            self._stream_queue.put("[[END]]")
-
-        return {"generation": final_msg}
-
-    def process_purchase_request(
-        self, user_request: str, chat_history: Optional[List[Dict]] = None
-    ) -> Tuple[Dict[str, Any], List[int]]:
-        """處理請購請求"""
-
-        if not chat_history:
-            chat_history = []
-
-        # 初始化狀態
-        initial_state = {
-            "user_request": user_request,
-            "purchase_history": [],
-            "recommendations": "",
-            "user_approval": False,
-            "purchase_order": {},
-            "api_response": {},
-            "chat_history": chat_history,
-            "current_step": "開始處理",
-        }
-
+    def _handle_off_topic(self, user_input: str, session_id: str) -> str:
+        """處理偏離主題的對話"""
         try:
-            # 執行工作流程
-            result = self.workflow.invoke(initial_state)
+            state = self._get_session_state(session_id)
+            guidance = self.guidance_chain.invoke(
+                {"user_input": user_input, "current_state": state["conversation_state"]}
+            )
+            return guidance
+        except Exception as e:
+            logger.error(f"生成引導訊息失敗: {e}")
+            return "我是專門協助您處理採購相關事務的助手。請告訴我您想要採購什麼產品，我會為您提供最合適的推薦。"
 
-            # 簡化的 token 計算（實際應用中需要更精確的計算）
-            token_count = [100, 80, 20]  # [total, prompt, completion]
+    def _format_purchase_history(self, history: List[Dict]) -> str:
+        """格式化採購歷史資料"""
+        if not history:
+            return "沒有相關的採購歷史資料。"
 
-            return result, token_count
+        history_text = ""
+        for item in history:
+            history_text += f"""
+產品: {item.get("product_name", "N/A")}
+類別: {item.get("category", "N/A")}
+供應商: {item.get("supplier", "N/A")}
+數量: {item.get("quantity", "N/A")}
+單價: NT$ {item.get("unit_price", "N/A"):,}
+購買日期: {item.get("purchase_date", "N/A")}
+部門: {item.get("department", "N/A")}
+---
+"""
+        return history_text
 
-        except requests.RequestException as e:
-            logger.error("處理請購請求失敗: %s", e)
-            error_msg = f"處理請購請求時發生錯誤：{str(e)}"
-            self._stream_text(error_msg)
+    def _format_order_display(self, order_data: Dict) -> str:
+        """格式化請購單顯示"""
+        total_amount = order_data.get("unit_price", 0) * order_data.get("quantity", 0)
 
-            if self._stream_queue:
-                self._stream_queue.put("[[END]]")
+        return f"""產品名稱：{order_data.get("product_name", "N/A")}
+產品類別：{order_data.get("category", "N/A")}
+數量：{order_data.get("quantity", 0)}
+單價：NT$ {order_data.get("unit_price", 0):,}
+總金額：NT$ {total_amount:,}
+請購人：{order_data.get("requester", "N/A")}
+部門：{order_data.get("department", "N/A")}
+請購理由：{order_data.get("reason", "N/A")}
+是否緊急：{"是" if order_data.get("urgent", False) else "否"}
+預期交貨日期：{order_data.get("expected_delivery_date", "N/A")}"""
 
-            return {"generation": error_msg}, [0, 0, 0]
-        except ValueError as e:
-            logger.error("處理請購請求失敗: %s", e)
-            error_msg = f"處理請購請求時發生錯誤：{str(e)}"
-            self._stream_text(error_msg)
+    def chat(self, user_input: str, session_id: str = "default") -> str:
+        """主要的對話處理方法"""
+        try:
+            # 記錄使用者輸入
+            self._add_to_chat_history(session_id, "user", user_input)
 
-            if self._stream_queue:
-                self._stream_queue.put("[[END]]")
+            # 分類使用者意圖
+            intent_result = self._classify_intent(user_input, session_id)
 
-            return {"generation": error_msg}, [0, 0, 0]
+            # 根據意圖和狀態處理
+            if not intent_result.get("is_purchase_related", True):
+                response = self._handle_off_topic(user_input, session_id)
+            else:
+                state = self._get_session_state(session_id)
+                current_state = state["conversation_state"]
+
+                if (
+                    intent_result.get("intent") == "new_request"
+                    or current_state == ConversationState.INITIAL
+                ):
+                    response = self._handle_new_request(user_input, session_id)
+                elif current_state == ConversationState.WAITING_CONFIRMATION:
+                    response = self._handle_confirmation(user_input, session_id)
+                elif current_state == ConversationState.ADJUSTING:
+                    response = self._handle_adjustment(user_input, session_id)
+                elif current_state == ConversationState.CONFIRMING_ORDER:
+                    response = self._handle_order_confirmation(user_input, session_id)
+                elif current_state == ConversationState.COMPLETED:
+                    # 重新開始新的請購流程
+                    self._update_session_state(
+                        session_id,
+                        {
+                            "conversation_state": ConversationState.INITIAL,
+                            "current_recommendation": None,
+                            "confirmed_order": None,
+                        },
+                    )
+                    response = self._handle_new_request(user_input, session_id)
+                else:
+                    response = "請告訴我您想要採購什麼產品？"
+
+            # 記錄系統回應
+            self._add_to_chat_history(session_id, "assistant", response)
+
+            return response
+
+        except Exception as e:
+            logger.error(f"對話處理失敗: {e}")
+            return (
+                f"抱歉，處理您的訊息時發生錯誤：{str(e)}\n請重新輸入或聯絡系統管理員。"
+            )
+
+    def get_session_status(self, session_id: str = "default") -> Dict:
+        """獲取會話狀態資訊"""
+        return self._get_session_state(session_id)
+
+    def reset_session(self, session_id: str = "default"):
+        """重置會話狀態"""
+        if session_id in self._session_states:
+            del self._session_states[session_id]

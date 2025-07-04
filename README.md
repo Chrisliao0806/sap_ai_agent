@@ -1,25 +1,39 @@
-# 🛒 SAP 請購系統 AI Agent
+# 🛒 SAP 對話式請購系統 AI Agent
 
 ## 系統概述
 
-這是一個基於 AI 的智能請購系統，能夠：
+這是一個基於 AI 的智能對話式請購系統，能夠：
 
-1. **智能需求分析** - 分析使用者的請購需求
-2. **歷史數據分析** - 調用採購歷史 API 獲取相關數據
-3. **產品推薦** - 基於歷史數據和需求推薦最佳產品規格
-4. **自動化請購** - 創建並提交請購單到 SAP 系統
+1. **智能對話互動** - 透過自然語言對話完成請購流程
+2. **意圖識別** - 自動判斷使用者意圖和對話狀態
+3. **產品推薦** - 基於採購歷史推薦最適合的產品
+4. **流程引導** - 引導使用者完成完整的請購流程
+5. **狀態管理** - 維護多使用者會話狀態
+6. **主題控制** - 自動將偏離主題的對話導回採購相關內容
 
 ## 🏗️ 系統架構
 
 ```mermaid
 graph TB
-    A[使用者請購需求] --> B[需求分析 Agent]
-    B --> C[採購歷史 API]
-    C --> D[LLM 產品推薦]
-    D --> E[使用者確認]
-    E --> F[創建請購單]
-    F --> G[提交到 SAP API]
-    G --> H[請購單號]
+    A[使用者輸入] --> B[意圖分類]
+    B --> C{是否採購相關}
+    C -->|是| D[狀態判斷]
+    C -->|否| E[引導回採購主題]
+    D --> F{當前狀態}
+    F -->|初始| G[分析需求]
+    F -->|等待確認| H[處理確認]
+    F -->|調整中| I[調整推薦]
+    F -->|確認請購單| J[處理提交]
+    G --> K[採購歷史API]
+    K --> L[生成推薦]
+    L --> M[等待使用者確認]
+    H --> N{確認結果}
+    N -->|同意| O[創建請購單]
+    N -->|不同意| P[進入調整狀態]
+    I --> Q[調整推薦]
+    J --> R[提交SAP API]
+    O --> S[確認請購單]
+    R --> T[完成流程]
 ```
 
 ## 🚀 快速開始
@@ -34,136 +48,115 @@ cd sap_ai_agent
 pip install -r requirements.txt
 
 # 設定環境變數
-cp .env.example .env
-# 編輯 .env 檔案，填入您的 OpenAI API Key
+export OPENAI_API_KEY="your-openai-api-key-here"
+export OPENAI_BASE_URL="https://api.openai.com/v1"  # 可選
 ```
 
-### 2. 設定環境變數
-
-在 `.env` 檔案中設定：
-
-```bash
-OPENAI_API_KEY=your-openai-api-key-here
-OPENAI_BASE_URL=https://api.openai.com/v1
-SAP_API_BASE_URL=http://localhost:7777
-```
-
-### 3. 啟動系統
+### 2. 啟動系統
 
 **步驟 1：啟動 SAP API 服務器**
 ```bash
 python app.py
 ```
+系統將在 `http://localhost:7777` 啟動
 
-**步驟 2：測試請購系統**
+**步驟 2：測試對話式系統**
 ```bash
-# 簡單演示
-python demo_purchase.py
+# 命令行對話模式
+python demo_chat.py
 
-# 完整測試
-python test_purchase_system.py
-
-# 直接使用模組
-python purchase_agent.py
+# 完整系統測試
+python tests/test_conversational_system.py
 ```
 
-## 📋 使用範例
+### 3. 使用 API 端點
 
-### 基本使用
+```bash
+# 與 AI Agent 對話
+curl -X POST http://localhost:7777/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "我需要採購一台筆記型電腦", "session_id": "user123"}'
 
-```python
-from purchase_agent import PurchaseAgent, PurchaseAgentConfig
-import os
+# 查看會話狀態
+curl http://localhost:7777/api/chat/session/user123
 
-# 建立配置
-config = PurchaseAgentConfig(
-    api_base_url="http://localhost:7777",
-    model="gpt-4o-mini",
-    openai_api_key=os.getenv("OPENAI_API_KEY")
-)
-
-# 建立 Agent
-agent = PurchaseAgent(config)
-
-# 處理請購需求
-request = "我需要為軟體開發部門採購 MacBook Pro，記憶體16GB以上，需要3台"
-result, tokens = agent.process_purchase_request(request)
-
-print(f"處理結果: {result}")
-print(f"Token 使用量: {tokens}")
+# 重置會話
+curl -X DELETE http://localhost:7777/api/chat/session/user123
 ```
 
-### 串流模式
+## 💬 對話式使用範例
 
-```python
-import queue
-import threading
+### 完整請購流程
 
-# 設定串流佇列
-stream_queue = queue.Queue()
-agent.attach_stream_queue(stream_queue)
+```
+👤 使用者: 我需要採購一台筆記型電腦，用於開發工作
+🤖 AI助手: 📋 需求分析完成
+          [分析結果...]
+          🎯 產品推薦
+          [推薦內容...]
+          請問您是否同意此推薦？
 
-# 處理串流輸出
-def handle_stream():
-    while True:
-        token = stream_queue.get()
-        if token == "[[END]]":
-            break
-        print(token, end="", flush=True)
+👤 使用者: 同意
+🤖 AI助手: 📋 請購單已創建
+          [請購單詳情...]
+          請確認請購單資訊是否正確？
 
-# 啟動串流處理
-stream_thread = threading.Thread(target=handle_stream)
-stream_thread.start()
+👤 使用者: 確認提交
+🤖 AI助手: ✅ 請購單提交成功！
+          請購單號：PR20250704ABCDEF
+          [詳細資訊...]
+```
 
-# 處理請購
-result, tokens = agent.process_purchase_request(request)
-stream_thread.join()
+### 調整推薦流程
+
+```
+👤 使用者: 我需要採購平板電腦，預算3萬元
+🤖 AI助手: [推薦結果...]
+
+👤 使用者: 不同意，我要更便宜的選項
+🤖 AI助手: 請告訴我您希望如何調整這個推薦？
+
+👤 使用者: 預算降到2萬元
+🤖 AI助手: 🔄 推薦已調整
+          [調整後的推薦...]
+```
+
+### 偏離主題引導
+
+```
+👤 使用者: 今天天氣真好
+🤖 AI助手: 我是專門協助您處理採購相關事務的助手。
+          請告訴我您想要採購什麼產品？
+
+👤 使用者: 我需要採購手機
+🤖 AI助手: [開始分析需求...]
 ```
 
 ## 🎯 功能特色
 
-### 1. 智能需求分析
-- 自動解析請購需求中的產品類型、數量、預算等關鍵資訊
-- 識別業務部門和使用用途
-- 提取時間需求和優先級
+### 1. 智能對話狀態管理
+- **多狀態追蹤**：初始、分析、推薦、確認、調整、提交等
+- **會話隔離**：每個使用者維護獨立的對話狀態
+- **狀態持久化**：會話狀態在系統運行期間保持
 
-### 2. 歷史數據智能分析
-- 自動調用採購歷史 API 獲取相關數據
-- 分析供應商表現和價格趨勢
-- 識別最佳採購時機和規格
+### 2. 意圖識別與分類
+- **自動意圖分類**：新請購、確認推薦、調整需求、提交請購
+- **主題檢測**：識別是否為採購相關對話
+- **引導機制**：自動將偏離主題的對話導回採購流程
 
-### 3. 產品推薦引擎
-- 基於歷史採購數據推薦最適合的產品
-- 提供多個替代方案
-- 考慮成本效益和供應商可靠性
+### 3. 智能推薦與調整
+- **歷史數據分析**：基於採購歷史推薦最適合的產品
+- **動態調整**：根據使用者反饋調整推薦內容
+- **多方案提供**：提供主要推薦和替代方案
 
-### 4. 自動化流程
-- 自動創建符合規範的請購單
-- 一鍵提交到 SAP 系統
-- 實時追蹤請購狀態
-
-## 📊 測試案例
-
-系統內建多種測試案例：
-
-1. **軟體開發部門筆電需求**
-   ```
-   我需要為軟體開發部門採購新的筆記型電腦，要求MacBook Pro，記憶體16GB以上，需要3台，預算每台7.5萬元。
-   ```
-
-2. **設計部門顯示器需求**
-   ```
-   設計部門需要4K顯示器，27吋，需要5台，預算每台2萬元以內。
-   ```
-
-3. **行銷部門平板需求**
-   ```
-   行銷部門需要iPad Pro用於客戶展示，12.9吋，需要2台。
-   ```
+### 4. 完整流程管理
+- **步驟式引導**：逐步引導使用者完成請購流程
+- **確認機制**：每個重要步驟都需要使用者確認
+- **錯誤處理**：自動處理異常情況並提供解決方案
 
 ## 🔧 系統配置
 
-### PurchaseAgentConfig 參數說明
+### ConversationalPurchaseAgent 參數
 
 | 參數 | 類型 | 預設值 | 說明 |
 |------|------|--------|------|
@@ -173,82 +166,103 @@ stream_thread.join()
 | `temperature` | float | 0.3 | 模型創造性參數 |
 | `openai_api_key` | str | "" | OpenAI API Key |
 | `openai_base_url` | str | "https://api.openai.com/v1" | OpenAI API 基礎 URL |
+| `default_requester` | str | "系統使用者" | 預設請購人 |
+| `default_department` | str | "IT部門" | 預設部門 |
 
 ## 📝 API 端點
 
-系統使用以下 SAP API 端點：
+### 對話式端點
 
-- `GET /api/purchase-history` - 獲取採購歷史
-- `POST /api/purchase-request` - 創建請購單
-- `GET /api/purchase-request/{id}` - 查詢請購狀態
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/chat` | POST | 與 AI Agent 對話 |
+| `/api/chat/session/<session_id>` | GET | 獲取會話狀態 |
+| `/api/chat/session/<session_id>` | DELETE | 重置會話 |
+| `/api/chat/sessions` | GET | 獲取所有會話列表 |
 
-## 🔍 工作流程詳解
+### 傳統端點
 
-1. **需求分析** (`analyze_request`)
-   - 解析使用者輸入的請購需求
-   - 提取關鍵資訊（產品類型、數量、預算等）
+| 端點 | 方法 | 說明 |
+|------|------|------|
+| `/api/purchase-history` | GET | 獲取採購歷史 |
+| `/api/inventory` | GET | 獲取庫存資訊 |
+| `/api/purchase-request` | POST | 創建請購單 |
+| `/api/purchase-request/<id>` | GET | 查詢請購狀態 |
 
-2. **獲取歷史數據** (`fetch_purchase_history`)
-   - 調用採購歷史 API
-   - 獲取相關的歷史採購記錄
+## 🔍 對話狀態流程
 
-3. **產品推薦** (`recommend_product`)
-   - 分析歷史數據和使用者需求
-   - 生成產品推薦和替代方案
-
-4. **創建請購單** (`create_purchase_order`)
-   - 根據推薦結果創建正式請購單
-   - 包含所有必要欄位和資訊
-
-5. **提交請購** (`submit_purchase_order`)
-   - 將請購單提交到 SAP 系統
-   - 返回請購單號和狀態
-
-6. **生成回應** (`generate_final_response`)
-   - 生成最終的處理結果
-   - 提供請購單號和追蹤資訊
+1. **INITIAL** - 初始狀態，等待使用者輸入需求
+2. **ANALYZING** - 分析使用者需求中
+3. **WAITING_CONFIRMATION** - 等待使用者確認推薦
+4. **ADJUSTING** - 根據使用者反饋調整推薦
+5. **CONFIRMING_ORDER** - 確認請購單內容
+6. **SUBMITTING** - 提交請購單到系統
+7. **COMPLETED** - 請購流程完成
 
 ## 🛠️ 測試和除錯
 
 ### 運行測試
 
 ```bash
-# 基本功能測試
-python test_purchase_system.py
+# 完整對話系統測試
+python tests/test_conversational_system.py
 
-# 選擇測試模式：
-# 1. 基本功能測試
-# 2. 串流回應測試
-# 3. 互動模式
-# 4. 錯誤處理測試
-# 5. 完整測試
+# 命令行互動測試
+python demo_chat.py
+
+# 檢查系統狀態
+curl http://localhost:7777/api/chat/sessions
 ```
 
-### 常見問題
+### 測試場景
 
-1. **API 連接失敗**
-   - 確保 SAP API 服務器正在運行：`python app.py`
-   - 檢查 API URL 設定是否正確
+1. **基本請購流程**
+   - 需求輸入 → 推薦確認 → 請購單提交
 
-2. **OpenAI API 錯誤**
-   - 確認 API Key 設定正確
-   - 檢查網路連線和 API 配額
+2. **調整推薦流程**
+   - 需求輸入 → 推薦 → 要求調整 → 新推薦 → 確認
 
-3. **請購單創建失敗**
-   - 檢查請購數據格式是否正確
-   - 確認所有必要欄位都已填入
+3. **多會話並行**
+   - 同時維護多個使用者的對話狀態
+
+4. **偏離主題處理**
+   - 自動識別並引導回採購主題
 
 ## 🔐 安全考量
 
-- API Key 應該透過環境變數設定，不要直接寫在代碼中
-- 生產環境應該使用 HTTPS 連接
-- 請購單應該包含適當的驗證和授權機制
+- **API Key 管理**：透過環境變數安全管理
+- **會話隔離**：每個使用者會話完全隔離
+- **輸入驗證**：對所有使用者輸入進行驗證
+- **錯誤處理**：優雅處理各種異常情況
 
 ## 📈 效能優化
 
-- 使用串流模式提供即時回饋
-- 快取常用的採購歷史數據
-- 優化 LLM 提示以減少 Token 消耗
+- **會話管理**：自動清理過期會話
+- **快取機制**：快取常用的採購歷史資料
+- **併發處理**：支援多使用者同時對話
+- **資源控制**：限制每個會話的記憶體使用
+
+## 🎨 自定義配置
+
+### 修改預設設定
+
+```python
+from purchase_agent import ConversationalPurchaseAgent, PurchaseAgentConfig
+
+config = PurchaseAgentConfig(
+    api_base_url="http://your-sap-server:8080",
+    model="gpt-4",
+    temperature=0.1,
+    default_requester="您的名字",
+    default_department="您的部門"
+)
+
+agent = ConversationalPurchaseAgent(config)
+```
+
+### 自定義提示模板
+
+您可以修改 `prompts.py` 中的提示模板來自定義 AI 的回應風格和行為。
 
 ## 🤝 貢獻指南
 

@@ -4,22 +4,38 @@ SAP 請購系統 AI Agent - 狀態和資料結構
 包含所有的 TypedDict 狀態定義和 Pydantic 模型
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
+from enum import Enum
+
+
+class ConversationState(str, Enum):
+    """對話狀態枚舉"""
+
+    INITIAL = "initial"  # 初始狀態，等待需求輸入
+    ANALYZING = "analyzing"  # 分析需求中
+    RECOMMENDING = "recommending"  # 推薦產品中
+    WAITING_CONFIRMATION = "waiting_confirmation"  # 等待確認推薦
+    ADJUSTING = "adjusting"  # 調整推薦中
+    CONFIRMING_ORDER = "confirming_order"  # 確認請購單
+    SUBMITTING = "submitting"  # 提交請購單
+    COMPLETED = "completed"  # 完成
+    ERROR = "error"  # 錯誤狀態
 
 
 class PurchaseRequestState(TypedDict):
     """請購狀態定義"""
 
     user_request: str  # 使用者請購需求
+    conversation_state: ConversationState  # 對話狀態
     purchase_history: List[Dict]  # 採購歷史資料
-    recommendations: str  # LLM 推薦結果
-    user_approval: bool  # 使用者是否同意推薦
-    purchase_order: Dict  # 請購單資料
-    api_response: Dict  # API 回應
+    current_recommendation: Optional[Dict]  # 當前推薦
+    confirmed_order: Optional[Dict]  # 確認的請購單
+    api_response: Optional[Dict]  # API 回應
     chat_history: List[Dict]  # 對話歷史
-    current_step: str  # 目前步驟
+    user_context: Dict  # 使用者上下文資訊
+    error_message: Optional[str]  # 錯誤訊息
 
 
 class PurchaseRecommendation(BaseModel):
