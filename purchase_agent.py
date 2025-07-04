@@ -351,16 +351,16 @@ class ConversationalPurchaseAgent:
 
                 success_msg = f"""✅ 請購單提交成功！
                 
-📄 請購單詳情：
-- 請購單號：{request_id}
-- 產品：{order_data.get("product_name", "N/A")}
-- 數量：{order_data.get("quantity", 0)}
-- 預估金額：NT$ {total_amount:,}
-- 狀態：{api_response.get("data", {}).get("status", "N/A")}
+                📄 請購單詳情：
+                - 請購單號：{request_id}
+                - 產品：{order_data.get("product_name", "N/A")}
+                - 數量：{order_data.get("quantity", 0)}
+                - 預估金額：NT$ {total_amount:,}
+                - 狀態：{api_response.get("data", {}).get("status", "N/A")}
 
-您可以使用請購單號查詢審核進度。
+                您可以使用請購單號查詢審核進度。
 
-如果您還有其他採購需求，請隨時告訴我。"""
+                如果您還有其他採購需求，請隨時告訴我。"""
 
                 return success_msg
             else:
@@ -393,15 +393,15 @@ class ConversationalPurchaseAgent:
         history_text = ""
         for item in history:
             history_text += f"""
-產品: {item.get("product_name", "N/A")}
-類別: {item.get("category", "N/A")}
-供應商: {item.get("supplier", "N/A")}
-數量: {item.get("quantity", "N/A")}
-單價: NT$ {item.get("unit_price", "N/A"):,}
-購買日期: {item.get("purchase_date", "N/A")}
-部門: {item.get("department", "N/A")}
----
-"""
+            產品: {item.get("product_name", "N/A")}
+            類別: {item.get("category", "N/A")}
+            供應商: {item.get("supplier", "N/A")}
+            數量: {item.get("quantity", "N/A")}
+            單價: NT$ {item.get("unit_price", "N/A"):,}
+            購買日期: {item.get("purchase_date", "N/A")}
+            部門: {item.get("department", "N/A")}
+            ---
+            """
         return history_text
 
     def _format_order_display(self, order_data: Dict) -> str:
@@ -409,15 +409,15 @@ class ConversationalPurchaseAgent:
         total_amount = order_data.get("unit_price", 0) * order_data.get("quantity", 0)
 
         return f"""產品名稱：{order_data.get("product_name", "N/A")}
-產品類別：{order_data.get("category", "N/A")}
-數量：{order_data.get("quantity", 0)}
-單價：NT$ {order_data.get("unit_price", 0):,}
-總金額：NT$ {total_amount:,}
-請購人：{order_data.get("requester", "N/A")}
-部門：{order_data.get("department", "N/A")}
-請購理由：{order_data.get("reason", "N/A")}
-是否緊急：{"是" if order_data.get("urgent", False) else "否"}
-預期交貨日期：{order_data.get("expected_delivery_date", "N/A")}"""
+            產品類別：{order_data.get("category", "N/A")}
+            數量：{order_data.get("quantity", 0)}
+            單價：NT$ {order_data.get("unit_price", 0):,}
+            總金額：NT$ {total_amount:,}
+            請購人：{order_data.get("requester", "N/A")}
+            部門：{order_data.get("department", "N/A")}
+            請購理由：{order_data.get("reason", "N/A")}
+            是否緊急：{"是" if order_data.get("urgent", False) else "否"}
+            預期交貨日期：{order_data.get("expected_delivery_date", "N/A")}"""
 
     def chat(self, user_input: str, session_id: str = "default") -> str:
         """主要的對話處理方法"""
