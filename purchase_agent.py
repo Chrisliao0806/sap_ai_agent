@@ -15,57 +15,18 @@ import queue
 import logging
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
-from pydantic import BaseModel, Field
 
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from langchain_openai import ChatOpenAI
 from langgraph.graph import START, END, StateGraph
-from typing_extensions import TypedDict
+
+# 導入自定義模組
+from choose_state import PurchaseRequestState
+from prompts import PurchasePrompts
 
 # 設定日誌
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-class PurchaseRequestState(TypedDict):
-    """請購狀態定義"""
-
-    user_request: str  # 使用者請購需求
-    purchase_history: List[Dict]  # 採購歷史資料
-    recommendations: str  # LLM 推薦結果
-    user_approval: bool  # 使用者是否同意推薦
-    purchase_order: Dict  # 請購單資料
-    api_response: Dict  # API 回應
-    chat_history: List[Dict]  # 對話歷史
-    current_step: str  # 目前步驟
-
-
-class PurchaseRecommendation(BaseModel):
-    """產品推薦結構"""
-
-    product_name: str = Field(description="推薦的產品名稱")
-    category: str = Field(description="產品類別")
-    supplier: str = Field(description="建議供應商")
-    quantity: int = Field(description="建議數量")
-    unit_price: int = Field(description="建議單價")
-    total_amount: int = Field(description="總金額")
-    reason: str = Field(description="推薦理由")
-    alternatives: List[str] = Field(description="替代方案", default=[])
-
-
-class PurchaseOrder(BaseModel):
-    """請購單結構"""
-
-    product_name: str = Field(description="產品名稱")
-    category: str = Field(description="產品類別")
-    quantity: int = Field(description="數量")
-    unit_price: int = Field(description="單價")
-    requester: str = Field(description="請購人")
-    department: str = Field(description="部門")
-    reason: str = Field(description="請購理由")
-    urgent: bool = Field(description="是否緊急", default=False)
-    expected_delivery_date: str = Field(description="預期交貨日期", default="")
 
 
 @dataclass
@@ -99,94 +60,9 @@ class PurchaseAgent:
 
     def _setup_prompts(self):
         """設定各種提示模板"""
-
-        # 需求分析提示
-        self.analyze_request_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """你是一個專業的採購需求分析師。請分析使用者的請購需求，並提取關鍵資訊。
-            
-            分析要點：
-            1. 產品類型和規格需求
-            2. 數量需求
-            3. 預算考量
-            4. 使用用途
-            5. 時間需求
-            
-            請用繁體中文回覆，並整理成結構化的分析報告。""",
-                ),
-                ("human", "使用者請購需求：{user_request}"),
-            ]
-        )
-
-        # 產品推薦提示
-        self.recommend_product_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """你是一個專業的採購顧問。根據使用者需求和採購歷史資料，推薦最合適的產品規格。
-            
-            分析依據：
-            1. 採購歷史中的產品規格、價格、供應商表現
-            2. 使用者的具體需求
-            3. 成本效益分析
-            4. 供應商可靠性
-            
-            請提供具體的產品推薦，包括：
-            - 產品名稱和規格
-            - 建議供應商
-            - 建議數量和單價
-            - 推薦理由
-            - 替代方案
-            
-            請用繁體中文回覆。""",
-                ),
-                (
-                    "human",
-                    """
-            使用者需求：{user_request}
-            
-            採購歷史資料：
-            {purchase_history}
-            
-            請提供產品推薦。
-            """,
-                ),
-            ]
-        )
-
-        # 請購單創建提示
-        self.create_order_prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """你是一個專業的請購單助手。根據使用者確認的產品推薦，創建正式的請購單。
-            
-            請購單必須包含：
-            1. 產品名稱
-            2. 類別
-            3. 數量
-            4. 單價
-            5. 請購人
-            6. 部門
-            7. 請購理由
-            8. 是否緊急
-            9. 預期交貨日期
-            
-            請用 JSON 格式回覆。""",
-                ),
-                (
-                    "human",
-                    """
-            產品推薦：{recommendation}
-            使用者資訊：{user_info}
-            
-            請創建請購單。
-            """,
-                ),
-            ]
-        )
+        self.analyze_request_prompt = PurchasePrompts.get_analyze_request_prompt()
+        self.recommend_product_prompt = PurchasePrompts.get_recommend_product_prompt()
+        self.create_order_prompt = PurchasePrompts.get_create_order_prompt()
 
     def _setup_chains(self):
         """設定 LangChain 鏈"""

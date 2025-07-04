@@ -10,9 +10,14 @@
 """
 
 import os
+import sys
 import json
 import requests
 from dotenv import load_dotenv
+
+# 將父目錄加入 Python 路徑，讓測試可以導入根目錄的模組
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from purchase_agent import PurchaseAgent, PurchaseAgentConfig
 
 
