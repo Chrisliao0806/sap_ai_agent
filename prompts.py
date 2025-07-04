@@ -79,18 +79,25 @@ class PurchasePrompts:
                     "system",
                     """你是一個專業的請購單助手。根據使用者確認的產品推薦，創建正式的請購單。
             
-            請購單必須包含：
-            1. 產品名稱
-            2. 類別
-            3. 數量
-            4. 單價
-            5. 請購人
-            6. 部門
-            7. 請購理由
-            8. 是否緊急
-            9. 預期交貨日期
+            請購單必須包含以下欄位（使用正確的欄位名稱）：
+            1. product_name - 產品名稱
+            2. category - 類別
+            3. quantity - 數量
+            4. unit_price - 單價（整數）
+            5. requester - 請購人
+            6. department - 部門
+            7. reason - 請購理由（不是purchase_reason）
+            8. urgent - 是否緊急（布林值，不是is_urgent）
+            9. expected_delivery_date - 預期交貨日期（格式：YYYY-MM-DD，使用2025年的日期）
             
-            請用 JSON 格式回覆。""",
+            重要注意事項：
+            - 欄位名稱必須完全匹配API要求
+            - 日期必須是2025年的有效日期
+            - urgent欄位必須是布林值（true/false）
+            - unit_price必須是整數
+            - 如果推薦包含多個產品，請創建第一個產品的請購單
+            
+            請用 JSON 格式回覆，確保所有欄位名稱正確。""",
                 ),
                 (
                     "human",
@@ -98,7 +105,7 @@ class PurchasePrompts:
             產品推薦：{recommendation}
             使用者資訊：{user_info}
             
-            請創建請購單。
+            請創建請購單，使用正確的欄位名稱和2025年的日期。
             """,
                 ),
             ]

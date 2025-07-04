@@ -264,6 +264,25 @@ class PurchaseAgent:
         try:
             order_data = state["purchase_order"]
 
+            # 處理可能的嵌套結構 - 如果 AI 生成了包含 purchase_order 列表的結構
+            if isinstance(order_data, dict) and "purchase_order" in order_data:
+                # 取第一個請購單項目
+                if (
+                    isinstance(order_data["purchase_order"], list)
+                    and len(order_data["purchase_order"]) > 0
+                ):
+                    order_data = order_data["purchase_order"][0]
+                else:
+                    order_data = order_data["purchase_order"]
+
+            # 確保日期格式正確（如果是2023年的日期，更新為2025年）
+            if "expected_delivery_date" in order_data:
+                delivery_date = order_data["expected_delivery_date"]
+                if delivery_date.startswith("2023"):
+                    order_data["expected_delivery_date"] = delivery_date.replace(
+                        "2023", "2025"
+                    )
+
             # 呼叫請購單 API
             response = requests.post(
                 f"{self.config.api_base_url}/api/purchase-request",
@@ -296,47 +315,47 @@ class PurchaseAgent:
     def generate_final_response(self, state: PurchaseRequestState) -> Dict[str, Any]:
         """生成最終回應"""
         logger.info("生成最終回應")
-        
+
         # 檢查是否有成功的 API 回應
         api_response = state.get("api_response", {})
         purchase_order = state.get("purchase_order", {})
-        
+
         logger.info("API 回應: %s", api_response)
         logger.info("請購單: %s", purchase_order)
-        
+
         if api_response.get("request_id"):
             request_id = api_response["request_id"]
             product_name = purchase_order.get("product_name", "N/A")
             quantity = purchase_order.get("quantity", 0)
             unit_price = purchase_order.get("unit_price", 0)
             total_amount = unit_price * quantity if unit_price and quantity else 0
-            
+
             final_msg = f"""
-🎉 請購流程完成！
+            🎉 請購流程完成！
 
-📄 請購單詳情：
-- 請購單號：{request_id}
-- 產品：{product_name}
-- 數量：{quantity}
-- 預估金額：NT$ {total_amount:,}
+            📄 請購單詳情：
+            - 請購單號：{request_id}
+            - 產品：{product_name}
+            - 數量：{quantity}
+            - 預估金額：NT$ {total_amount:,}
 
-您可以使用請購單號查詢審核進度。
+            您可以使用請購單號查詢審核進度。
             """
         else:
             # 檢查是否有錯誤訊息
             error_info = ""
             if api_response.get("error"):
                 error_info = f"\n錯誤詳情：{api_response['error']}"
-            
+
             final_msg = f"""
-❌ 請購流程未完成
+            ❌ 請購流程未完成
 
-請檢查以下可能的問題：
-1. 網路連線是否正常
-2. API 服務是否正在運行
-3. 請購資料是否完整{error_info}
+            請檢查以下可能的問題：
+            1. 網路連線是否正常
+            2. API 服務是否正在運行
+            3. 請購資料是否完整{error_info}
 
-請重新嘗試或聯絡系統管理員。
+            請重新嘗試或聯絡系統管理員。
             """
 
         self._stream_text(final_msg)
@@ -393,42 +412,3 @@ class PurchaseAgent:
                 self._stream_queue.put("[[END]]")
 
             return {"generation": error_msg}, [0, 0, 0]
-
-
-def main():
-    """主要測試函數"""
-    import queue as q_module
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    # 設定配置
-    config = PurchaseAgentConfig(
-        api_base_url="http://localhost:7777",
-        model="gpt-4o-mini",
-        openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-    )
-
-    # 建立 Agent
-    agent = PurchaseAgent(config)
-
-    # 測試請購需求
-    test_request = "我需要申請採購新的軟體開發工程師筆記型電腦，規格要求：MacBook Pro，記憶體16GB以上，需要5台，預算每台不超過8萬元。"
-
-    print("🚀 開始處理請購需求...")
-    print(f"📝 請購需求：{test_request}")
-    print("=" * 50)
-
-    # 設定串流
-    stream_queue = q_module.Queue()
-    agent.attach_stream_queue(stream_queue)
-
-    # 處理請購
-    result, tokens = agent.process_purchase_request(test_request)
-
-    print(f"\n📊 Token 使用量：{tokens}")
-    print("✅ 請購流程完成")
-
-
-if __name__ == "__main__":
-    main()
