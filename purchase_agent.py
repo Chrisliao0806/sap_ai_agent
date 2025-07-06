@@ -579,14 +579,27 @@ class ConversationalPurchaseAgent:
                 if current_state == ConversationState.WAITING_ORDER_DETAILS:
                     # 在資料收集階段，優先檢查是否為產品變更或修改請求
                     user_input_lower = user_input.lower().strip()
-                    if any(keyword in user_input_lower for keyword in ["我要", "我想要", "換成", "改成", "不要這個", "重新選擇"]):
+                    if any(
+                        keyword in user_input_lower
+                        for keyword in [
+                            "我要",
+                            "我想要",
+                            "換成",
+                            "改成",
+                            "不要這個",
+                            "重新選擇",
+                        ]
+                    ):
                         # 用戶想要變更產品，回到初始狀態
-                        self._update_session_state(session_id, {
-                            "conversation_state": ConversationState.INITIAL,
-                            "current_recommendation": None,
-                            "confirmed_order": None,
-                            "collected_order_info": None
-                        })
+                        self._update_session_state(
+                            session_id,
+                            {
+                                "conversation_state": ConversationState.INITIAL,
+                                "current_recommendation": None,
+                                "confirmed_order": None,
+                                "collected_order_info": None,
+                            },
+                        )
                         response = self._handle_new_request(user_input, session_id)
                     else:
                         # 正常的資料收集
@@ -729,7 +742,7 @@ class ConversationalPurchaseAgent:
                 }
                 # 更新會話狀態
                 self._update_session_state(session_id, state)
-            
+
             collected_info = state["collected_order_info"]
 
             # 使用智能資料收集鏈分析用戶輸入
@@ -737,7 +750,9 @@ class ConversationalPurchaseAgent:
                 collection_result = self.smart_order_collection_chain.invoke(
                     {
                         "selected_product_info": selected_product_info,
-                        "collected_info": json.dumps(collected_info, ensure_ascii=False),
+                        "collected_info": json.dumps(
+                            collected_info, ensure_ascii=False
+                        ),
                         "user_input": user_input,
                     }
                 )
@@ -748,12 +763,12 @@ class ConversationalPurchaseAgent:
                 collection_result = {
                     "updated_collected_info": {},
                     "is_complete": False,
-                    "next_question": "抱歉，系統處理時發生錯誤，請重新提供資訊。"
+                    "next_question": "抱歉，系統處理時發生錯誤，請重新提供資訊。",
                 }
 
             # 更新已收集的資訊
             updated_collected_info = collection_result.get("updated_collected_info", {})
-            
+
             # 確保 updated_collected_info 不是 None
             if updated_collected_info is None:
                 updated_collected_info = {}
@@ -769,8 +784,20 @@ class ConversationalPurchaseAgent:
                 session_id, {"collected_order_info": final_collected_info}
             )
 
-            # 檢查是否可以創建請購單
-            if collection_result.get("is_complete", False):
+            # 檢查完成狀態：只有3個必要欄位都有值時才算完成
+            required_fields = ["quantity", "requester", "expected_delivery_date"]
+            all_required_present = all(
+                final_collected_info.get(field) is not None for field in required_fields
+            )
+
+            logger.info(f"完成狀態檢查: final_collected_info={final_collected_info}")
+            logger.info(f"必要欄位檢查: all_required_present={all_required_present}")
+            logger.info(
+                f"LLM回報狀態: is_complete={collection_result.get('is_complete', False)}"
+            )
+
+            # 使用我們自己的邏輯判斷是否完成，不完全依賴LLM的判斷
+            if all_required_present:
                 # 建立完整的請購單
                 order_data = {
                     "product_name": selected_product.get("product_name", "未指定產品"),
@@ -781,8 +808,8 @@ class ConversationalPurchaseAgent:
                         "requester", state["user_context"]["requester"]
                     ),
                     "department": state["user_context"]["department"],
-                    "reason": final_collected_info.get("reason", "業務需求"),
-                    "urgent": final_collected_info.get("urgent", False),
+                    "reason": "業務需求",  # 簡化為預設值
+                    "urgent": False,  # 簡化為預設值
                     "expected_delivery_date": final_collected_info.get(
                         "expected_delivery_date", ""
                     ),
