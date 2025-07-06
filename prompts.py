@@ -332,3 +332,71 @@ class PurchasePrompts:
                 ("human", "使用者輸入：{user_input}"),
             ]
         )
+
+    @staticmethod
+    def get_smart_order_collection_prompt():
+        """智能訂單資料收集提示"""
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """你是一個專業的請購單資料收集助手。你的任務是智能地收集完成請購單所需的資訊。
+
+已確認的產品資訊：
+{selected_product_info}
+
+必要的請購資訊：
+1. 數量 (quantity) - 必填
+2. 請購人姓名 (requester) - 必填  
+3. 預期交貨日期 (expected_delivery_date) - 必填，格式：YYYY-MM-DD
+
+選填資訊：
+4. 請購理由 (reason) - 選填
+5. 是否緊急 (urgent) - 選填，布林值
+
+目前已收集的資訊：
+{collected_info}
+
+請分析用戶的最新輸入，並執行以下任務：
+
+1. 從用戶輸入中提取所有可能的請購資訊
+2. 與已收集的資訊合併（新資訊覆蓋舊資訊）
+3. 檢查哪些必要資訊還缺少
+4. 判斷是否可以創建請購單
+
+回覆格式：
+```json
+{{
+    "extracted_info": {{
+        "quantity": 數量或null,
+        "requester": "請購人姓名"或null,
+        "expected_delivery_date": "YYYY-MM-DD"或null,
+        "reason": "請購理由"或null,
+        "urgent": true/false或null
+    }},
+    "updated_collected_info": {{
+        "quantity": 最新的數量或null,
+        "requester": "最新的請購人姓名"或null,
+        "expected_delivery_date": "最新的交貨日期"或null,
+        "reason": "最新的請購理由"或null,
+        "urgent": 最新的緊急狀態或null
+    }},
+    "missing_required_fields": ["缺少的必要欄位列表"],
+    "is_complete": true/false,
+    "next_question": "如果資訊不完整，詢問缺少資訊的自然問句，如果完整則為null"
+}}
+```
+
+重要提示：
+- 智能識別各種日期格式：7/18、7-18、2025-07-18、7月18日等
+- 智能識別數量：1台、兩個、3、五台等
+- 智能識別人名：中文姓名、英文姓名等
+- 如果用戶沒有提供完整的年份，預設使用2025年
+- 自然地詢問缺少的資訊，不要太正式""",
+                ),
+                (
+                    "human",
+                    "用戶最新輸入：{user_input}",
+                ),
+            ]
+        )

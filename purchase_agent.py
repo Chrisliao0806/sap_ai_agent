@@ -97,6 +97,9 @@ class ConversationalPurchaseAgent:
         self.custom_product_chain = (
             PurchasePrompts.get_custom_product_prompt() | self.llm | JsonOutputParser()
         )
+        self.smart_order_collection_chain = (
+            PurchasePrompts.get_smart_order_collection_prompt() | self.llm | JsonOutputParser()
+        )
 
     def _get_session_state(self, session_id: str) -> Dict:
         """獲取會話狀態"""
@@ -660,7 +663,7 @@ class ConversationalPurchaseAgent:
             return f"抱歉，處理您的自定義產品請求時發生錯誤：{str(e)}\n請重新提供產品資訊。"
 
     def _handle_order_details(self, user_input: str, session_id: str) -> str:
-        """處理請購單詳細資訊"""
+        """處理請購單詳細資訊 - 使用智能資料收集"""
         try:
             state = self._get_session_state(session_id)
             selected_product = state.get("selected_product")
@@ -677,64 +680,105 @@ class ConversationalPurchaseAgent:
                         if "MacBook Pro 14吋" in product.get("product_name", ""):
                             selected_product = product
                             break
+                elif "MacBook Pro 16吋" in recommendation:
+                    # 從採購歷史中找到對應的產品
+                    purchase_history = state.get("purchase_history", [])
+                    for product in purchase_history:
+                        if "MacBook Pro 16吋" in product.get("product_name", ""):
+                            selected_product = product
+                            break
 
                 # 如果還是找不到，使用推薦中的預設資訊
                 if not selected_product:
                     selected_product = {
-                        "product_name": "MacBook Pro 14吋",
+                        "product_name": "MacBook Pro 16吋",
                         "category": "筆記型電腦",
-                        "unit_price": 65000,
+                        "unit_price": 75000,
                         "supplier": "Apple Inc.",
                     }
 
-            # 解析使用者提供的詳細資訊
-            details = self.custom_product_chain.invoke({"user_input": user_input})
+            # 格式化產品資訊
+            selected_product_info = f"""產品名稱：{selected_product.get('product_name', 'N/A')}
+類別：{selected_product.get('category', 'N/A')}
+單價：NT$ {selected_product.get('unit_price', 0):,}
+供應商：{selected_product.get('supplier', 'N/A')}"""
 
-            # 檢查必要資訊是否完整
-            missing_info = []
+            # 獲取已收集的資訊（如果有的話）
+            collected_info = state.get("collected_order_info", {
+                "quantity": None,
+                "requester": None,
+                "expected_delivery_date": None,
+                "reason": None,
+                "urgent": None
+            })
 
-            if not details.get("quantity"):
-                missing_info.append("數量")
-            if not details.get("requester"):
-                missing_info.append("請購人姓名")
-            if not details.get("expected_delivery_date"):
-                missing_info.append("預期交貨日期")
+            # 使用智能資料收集鏈分析用戶輸入
+            collection_result = self.smart_order_collection_chain.invoke({
+                "selected_product_info": selected_product_info,
+                "collected_info": json.dumps(collected_info, ensure_ascii=False),
+                "user_input": user_input
+            })
 
-            if missing_info:
-                return (
-                    "請提供以下缺少的資訊：\n"
-                    + "\n".join([f"- {info}" for info in missing_info])
-                    + "\n\n請重新輸入完整資訊。"
+            # 更新已收集的資訊
+            updated_collected_info = collection_result.get("updated_collected_info", {})
+            
+            # 儲存更新後的資訊
+            self._update_session_state(session_id, {
+                "collected_order_info": updated_collected_info
+            })
+
+            # 檢查是否可以創建請購單
+            if collection_result.get("is_complete", False):
+                # 建立完整的請購單
+                order_data = {
+                    "product_name": selected_product.get("product_name", "未指定產品"),
+                    "category": selected_product.get("category", "其他"),
+                    "quantity": updated_collected_info.get("quantity", 1),
+                    "unit_price": selected_product.get("unit_price", 0),
+                    "requester": updated_collected_info.get("requester", state["user_context"]["requester"]),
+                    "department": state["user_context"]["department"],
+                    "reason": updated_collected_info.get("reason", "業務需求"),
+                    "urgent": updated_collected_info.get("urgent", False),
+                    "expected_delivery_date": updated_collected_info.get("expected_delivery_date", ""),
+                }
+
+                # 更新狀態
+                self._update_session_state(
+                    session_id,
+                    {
+                        "conversation_state": ConversationState.CONFIRMING_ORDER,
+                        "confirmed_order": order_data,
+                    },
                 )
 
-            # 建立完整的請購單
-            order_data = {
-                "product_name": selected_product.get("product_name", "未指定產品"),
-                "category": selected_product.get("category", "其他"),
-                "quantity": details.get("quantity", 1),
-                "unit_price": selected_product.get("unit_price", 0),
-                "requester": details.get(
-                    "requester", state["user_context"]["requester"]
-                ),
-                "department": state["user_context"]["department"],
-                "reason": details.get("reason", "業務需求"),
-                "urgent": details.get("urgent", False),
-                "expected_delivery_date": details.get("expected_delivery_date", ""),
-            }
+                # 格式化顯示請購單
+                order_display = self._format_order_display(order_data)
 
-            # 更新狀態
-            self._update_session_state(
-                session_id,
-                {
-                    "conversation_state": ConversationState.CONFIRMING_ORDER,
-                    "confirmed_order": order_data,
-                },
-            )
+                return f"✅ 資料收集完成！請購單已創建\n\n{order_display}\n\n請確認請購單資訊是否正確？\n- 輸入「確認提交」來提交請購單\n- 輸入「修改」來調整請購單\n- 輸入「取消」來取消請購"
+            else:
+                # 資訊不完整，繼續收集
+                next_question = collection_result.get("next_question", "請提供更多資訊。")
+                
+                # 顯示目前已收集的資訊
+                progress_info = []
+                if updated_collected_info.get("quantity"):
+                    progress_info.append(f"✅ 數量：{updated_collected_info['quantity']}")
+                else:
+                    progress_info.append("❌ 數量：尚未提供")
+                    
+                if updated_collected_info.get("requester"):
+                    progress_info.append(f"✅ 請購人：{updated_collected_info['requester']}")
+                else:
+                    progress_info.append("❌ 請購人：尚未提供")
+                    
+                if updated_collected_info.get("expected_delivery_date"):
+                    progress_info.append(f"✅ 交貨日期：{updated_collected_info['expected_delivery_date']}")
+                else:
+                    progress_info.append("❌ 交貨日期：尚未提供")
 
-            # 格式化顯示請購单
-            order_display = self._format_order_display(order_data)
-
-            return f"📋 請購單已創建\n\n{order_display}\n\n請確認請購單資訊是否正確？\n- 輸入「確認提交」來提交請購單\n- 輸入「修改」來調整請購單\n- 輸入「取消」來取消請購"
+                progress_text = "\n".join(progress_info)
+                
+                return f"📋 資料收集進度\n\n{progress_text}\n\n{next_question}"
 
         except Exception as e:
             logger.error(f"處理請購單詳細資訊失敗: {e}")
