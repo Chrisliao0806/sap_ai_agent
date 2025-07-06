@@ -312,12 +312,10 @@ class ConversationalPurchaseAgent:
 
     def _handle_confirmation(self, user_input: str, session_id: str) -> str:
         """處理確認推薦"""
-        user_input_lower = user_input.lower().strip()
+        # 注意：產品變更判斷現在由 LLM 在意圖分類中處理
+        # 這裡只處理純粹的確認或拒絕
 
-        # 先檢查是否包含產品變更請求
-        if self._is_product_change_request(user_input):
-            # 這是一個產品變更請求，處理產品切換
-            return self._handle_product_change_request(user_input, session_id)
+        user_input_lower = user_input.lower().strip()
 
         # 判斷使用者是否確認
         if any(
@@ -618,7 +616,12 @@ class ConversationalPurchaseAgent:
                 state = self._get_session_state(session_id)
                 current_state = state["conversation_state"]
 
-                if (
+                # 檢查是否為產品變更請求
+                if intent_result.get("is_product_change", False):
+                    response = self._handle_product_change_request(
+                        user_input, session_id
+                    )
+                elif (
                     intent_result.get("intent") == "new_request"
                     or current_state == ConversationState.INITIAL
                 ):
@@ -782,52 +785,6 @@ class ConversationalPurchaseAgent:
         except Exception as e:
             logger.error(f"處理請購單詳細資訊失敗: {e}")
             return f"抱歉，處理請購單資訊時發生錯誤：{str(e)}\n請重新提供相關資訊。"
-
-    def _is_product_change_request(self, user_input: str) -> bool:
-        """判斷是否為產品變更請求"""
-        user_input_lower = user_input.lower().strip()
-
-        # 檢查是否包含產品變更關鍵字
-        change_keywords = [
-            "換成",
-            "改成",
-            "要",
-            "想要",
-            "需要",
-            "選擇",
-            "買",
-            "購買",
-            "改用",
-        ]
-
-        # 檢查是否包含產品名稱相關關鍵字
-        product_keywords = [
-            "macbook",
-            "mac",
-            "iphone",
-            "電腦",
-            "筆電",
-            "手機",
-            "螢幕",
-            "滑鼠",
-            "鍵盤",
-            "pro",
-            "air",
-            "13吋",
-            "14吋",
-            "15吋",
-            "16吋",
-        ]
-
-        # 如果同時包含變更關鍵字和產品關鍵字，視為產品變更請求
-        has_change_keyword = any(
-            keyword in user_input_lower for keyword in change_keywords
-        )
-        has_product_keyword = any(
-            keyword in user_input_lower for keyword in product_keywords
-        )
-
-        return has_change_keyword and has_product_keyword
 
     def _handle_product_change_request(self, user_input: str, session_id: str) -> str:
         """處理產品變更請求"""

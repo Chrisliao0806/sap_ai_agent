@@ -23,10 +23,17 @@ class PurchasePrompts:
 - new_request: 新的請購需求
 - confirm_recommendation: 確認推薦
 - request_adjustment: 要求調整
+- product_change: 要求更換產品（在確認階段想要選擇不同的產品）
 - confirm_order: 確認請購單
 - submit_order: 提交請購單
 - off_topic: 與採購無關的話題
 - unclear: 不清楚的輸入
+
+意圖判斷重點：
+1. 如果使用者在確認推薦階段表達想要不同的產品、換成其他型號、或指定特定產品名稱，判斷為 product_change
+2. 如果使用者表達同意、確認、接受目前推薦，判斷為 confirm_recommendation
+3. 如果使用者表達不滿意但沒有明確指定替代產品，判斷為 request_adjustment
+4. 如果使用者提出新的採購需求，判斷為 new_request
 
 請根據使用者輸入和當前狀態，判斷使用者的意圖並回傳對應的狀態。
 如果使用者偏離採購主題，請禮貌地將話題導回採購相關內容。
@@ -35,7 +42,8 @@ class PurchasePrompts:
 - intent: 使用者意圖
 - next_state: 下一個對話狀態  
 - is_purchase_related: 是否與採購相關（布林值）
-- guidance_message: 如果需要引導使用者，提供引導訊息""",
+- guidance_message: 如果需要引導使用者，提供引導訊息
+- is_product_change: 是否為產品更換需求（布林值）""",
                 ),
                 (
                     "human",
