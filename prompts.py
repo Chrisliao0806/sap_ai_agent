@@ -347,14 +347,10 @@ class PurchasePrompts:
 已確認的產品資訊：
 {selected_product_info}
 
-必要的請購資訊：
+必要的請購資訊（只收集這3項）：
 1. 數量 (quantity) - 必填
 2. 請購人姓名 (requester) - 必填  
 3. 預期交貨日期 (expected_delivery_date) - 必填，格式：YYYY-MM-DD
-
-選填資訊：
-4. 請購理由 (reason) - 選填
-5. 是否緊急 (urgent) - 選填，布林值
 
 目前已收集的資訊：
 {collected_info}
@@ -364,7 +360,7 @@ class PurchasePrompts:
 1. 從用戶輸入中提取所有可能的請購資訊
 2. 與已收集的資訊合併（新資訊覆蓋舊資訊）
 3. 檢查哪些必要資訊還缺少
-4. 判斷是否可以創建請購單
+4. 判斷是否可以創建請購單（只有當3個必要欄位都有值時才為true）
 
 回覆格式：
 ```json
@@ -372,16 +368,12 @@ class PurchasePrompts:
     "extracted_info": {{
         "quantity": 數量或null,
         "requester": "請購人姓名"或null,
-        "expected_delivery_date": "YYYY-MM-DD"或null,
-        "reason": "請購理由"或null,
-        "urgent": true/false或null
+        "expected_delivery_date": "YYYY-MM-DD"或null
     }},
     "updated_collected_info": {{
         "quantity": 最新的數量或null,
         "requester": "最新的請購人姓名"或null,
-        "expected_delivery_date": "最新的交貨日期"或null,
-        "reason": "最新的請購理由"或null,
-        "urgent": 最新的緊急狀態或null
+        "expected_delivery_date": "最新的交貨日期"或null
     }},
     "missing_required_fields": ["缺少的必要欄位列表"],
     "is_complete": true/false,
@@ -394,6 +386,7 @@ class PurchasePrompts:
 - 智能識別數量：1台、兩個、3、五台等
 - 智能識別人名：中文姓名、英文姓名等
 - 如果用戶沒有提供完整的年份，預設使用2025年
+- 不要詢問請購理由或是否緊急，只收集必要的3項資訊
 - 自然地詢問缺少的資訊，不要太正式""",
                 ),
                 (
