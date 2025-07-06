@@ -205,3 +205,93 @@ class PurchasePrompts:
                 ),
             ]
         )
+
+    @staticmethod
+    def get_extract_requirement_prompt():
+        """需求提取提示"""
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """你是一個專業的需求分析師。請從使用者的請購需求中提取關鍵資訊。
+            
+請提取以下資訊：
+- product_name: 產品名稱（如果明確提及）
+- product_type: 產品類型/類別（如：筆記型電腦、手機、平板等）
+- budget: 預算（數字，如果提及）
+- quantity: 數量（如果提及）
+- urgency: 緊急程度
+- specifications: 規格需求
+
+請用JSON格式回覆，包含提取到的資訊。如果某個欄位沒有明確提及，則設為null或空字串。""",
+                ),
+                ("human", "使用者請購需求：{user_request}"),
+            ]
+        )
+
+    @staticmethod
+    def get_direct_order_prompt():
+        """直接創建請購單提示"""
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """你是一個專業的請購單助手。根據使用者需求和匹配的歷史產品，創建正式的請購單。
+            
+請購單必須包含以下欄位：
+1. product_name - 產品名稱
+2. category - 類別
+3. quantity - 數量（預設為1）
+4. unit_price - 單價（整數）
+5. requester - 請購人
+6. department - 部門
+7. reason - 請購理由
+8. urgent - 是否緊急（布林值）
+9. expected_delivery_date - 預期交貨日期（格式：YYYY-MM-DD，使用2025年的日期）
+
+重要注意事項：
+- 基於匹配的歷史產品資訊
+- 根據使用者需求調整數量
+- 日期必須是2025年的有效日期
+- urgent欄位必須是布林值（true/false）
+- unit_price必須是整數
+
+請用 JSON 格式回覆，確保所有欄位名稱正確。""",
+                ),
+                (
+                    "human",
+                    """
+使用者需求：{requirement}
+匹配的歷史產品：{matching_product}
+使用者資訊：{user_info}
+
+請創建請購單，使用正確的欄位名稱和2025年的日期。
+                """,
+                ),
+            ]
+        )
+
+    @staticmethod
+    def get_custom_product_prompt():
+        """自定義產品提示"""
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """你是一個專業的產品資訊分析師。請從使用者輸入中提取產品和請購資訊。
+            
+請提取以下資訊：
+- product_name: 產品名稱
+- category: 產品類別
+- unit_price: 單價（整數）
+- quantity: 數量
+- requester: 請購人姓名
+- reason: 請購理由
+- urgent: 是否緊急（布林值）
+- expected_delivery_date: 預期交貨日期（格式：YYYY-MM-DD）
+
+請用JSON格式回覆，包含提取到的資訊。如果某個欄位沒有明確提及，則設為null或空字串。""",
+                ),
+                ("human", "使用者輸入：{user_input}"),
+            ]
+        )

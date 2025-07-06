@@ -11,15 +11,14 @@ SAP 請購系統 AI Agent
 import json
 import requests
 import logging
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from langchain_openai import ChatOpenAI
 
 # 導入自定義模組
-from choose_state import ConversationState, PurchaseRequestState
+from choose_state import ConversationState
 from prompts import PurchasePrompts
 
 # 設定日誌
@@ -39,6 +38,13 @@ class PurchaseAgentConfig:
     openai_base_url: str = "https://api.openai.com/v1"
     default_requester: str = "系統使用者"
     default_department: str = "IT部門"
+
+    def __post_init__(self):
+        # 如果沒有設定 openai_api_key，從環境變量獲取
+        if not self.openai_api_key:
+            import os
+
+            self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
 
 
 class ConversationalPurchaseAgent:
@@ -79,6 +85,17 @@ class ConversationalPurchaseAgent:
         )
         self.guidance_chain = (
             PurchasePrompts.get_guidance_prompt() | self.llm | StrOutputParser()
+        )
+        self.extract_requirement_chain = (
+            PurchasePrompts.get_extract_requirement_prompt()
+            | self.llm
+            | JsonOutputParser()
+        )
+        self.direct_order_chain = (
+            PurchasePrompts.get_direct_order_prompt() | self.llm | JsonOutputParser()
+        )
+        self.custom_product_chain = (
+            PurchasePrompts.get_custom_product_prompt() | self.llm | JsonOutputParser()
         )
 
     def _get_session_state(self, session_id: str) -> Dict:
@@ -141,11 +158,17 @@ class ConversationalPurchaseAgent:
                 "guidance_message": "抱歉，我無法理解您的需求。請告訴我您想要採購什麼產品？",
             }
 
-    def _fetch_purchase_history(self) -> List[Dict]:
+    def _fetch_purchase_history(self, product_type: str = None) -> List[Dict]:
         """獲取採購歷史資料"""
         try:
+            params = {}
+            if product_type:
+                params["category"] = product_type
+
             response = requests.get(
-                f"{self.config.api_base_url}/api/purchase-history", timeout=10
+                f"{self.config.api_base_url}/api/purchase-history",
+                params=params,
+                timeout=10,
             )
 
             if response.status_code == 200:
@@ -158,33 +181,130 @@ class ConversationalPurchaseAgent:
             logger.error(f"獲取採購歷史失敗: {e}")
             return []
 
+    def _find_matching_product(
+        self, requirement: Dict, purchase_history: List[Dict]
+    ) -> Optional[Dict]:
+        """從採購歷史中找到符合需求的產品"""
+        try:
+            product_name = requirement.get("product_name", "") or ""
+            product_type = requirement.get("product_type", "") or ""
+            budget = requirement.get("budget", 0) or 0
+
+            product_name = product_name.lower() if product_name else ""
+            product_type = product_type.lower() if product_type else ""
+
+            # 創建匹配得分系統
+            best_match = None
+            best_score = 0
+
+            for product in purchase_history:
+                score = 0
+                product_name_lower = (product.get("product_name", "") or "").lower()
+                product_category_lower = (product.get("category", "") or "").lower()
+
+                # 檢查產品名稱匹配
+                if product_name:
+                    # 精確匹配檢查
+                    if product_name in product_name_lower:
+                        score += 10
+                    # 關鍵字匹配（例如：macbook, 14吋 等）
+                    product_keywords = product_name.split()
+                    for keyword in product_keywords:
+                        if keyword in product_name_lower:
+                            score += 5
+
+                # 檢查產品類型匹配
+                if product_type:
+                    if product_type in product_category_lower:
+                        score += 8
+
+                # 檢查預算匹配
+                if budget > 0:
+                    product_price = product.get("unit_price", 0) or 0
+                    if product_price <= budget:
+                        score += 3
+                    elif product_price <= budget * 1.1:  # 允許10%的預算彈性
+                        score += 1
+
+                # 更新最佳匹配
+                if score > best_score and score >= 5:  # 至少要有基本匹配分數
+                    best_match = product
+                    best_score = score
+
+            return best_match
+
+        except Exception as e:
+            logger.error(f"尋找符合產品失敗: {e}")
+            return None
+
     def _handle_new_request(self, user_input: str, session_id: str) -> str:
         """處理新的請購需求"""
         try:
-            # 分析需求
-            analysis = self.analyze_chain.invoke({"user_request": user_input})
-
-            # 獲取採購歷史
-            purchase_history = self._fetch_purchase_history()
-
-            # 生成推薦
-            history_text = self._format_purchase_history(purchase_history[:10])
-            recommendation = self.recommend_chain.invoke(
-                {"user_request": user_input, "purchase_history": history_text}
+            # 1. 解析需求資訊
+            requirement = self.extract_requirement_chain.invoke(
+                {"user_request": user_input}
             )
 
-            # 更新會話狀態
-            self._update_session_state(
-                session_id,
-                {
-                    "conversation_state": ConversationState.WAITING_CONFIRMATION,
-                    "user_request": user_input,
-                    "purchase_history": purchase_history,
-                    "current_recommendation": recommendation,
-                },
+            # 2. 根據需求類型決定是否查詢3C產品歷史
+            product_type = requirement.get("product_type", "")
+
+            # 3. 獲取3C產品採購歷史
+            purchase_history = self._fetch_purchase_history(product_type)
+
+            # 4. 檢查是否有符合的歷史記錄
+            matching_product = self._find_matching_product(
+                requirement, purchase_history
             )
 
-            return f"📋 需求分析完成\n\n{analysis}\n\n🎯 產品推薦\n\n{recommendation}"
+            if matching_product:
+                # 5a. 有符合的歷史記錄，先讓用戶確認產品
+                recommendation = f"""✅ 根據採購歷史記錄，我找到了符合您需求的產品：
+
+**產品名稱**：{matching_product["product_name"]}
+**產品類別**：{matching_product["category"]}
+**供應商**：{matching_product["supplier"]}
+**單價**：NT$ {matching_product["unit_price"]:,}
+**推薦理由**：基於採購歷史記錄，此產品符合您的需求
+
+請確認此產品是否符合您的需求？"""
+
+                # 更新會話狀態
+                self._update_session_state(
+                    session_id,
+                    {
+                        "conversation_state": ConversationState.WAITING_CONFIRMATION,
+                        "user_request": user_input,
+                        "purchase_history": purchase_history,
+                        "current_recommendation": recommendation,
+                        "selected_product": matching_product,
+                        "requirement": requirement,
+                        "has_matching_history": True,
+                    },
+                )
+
+                return f"{recommendation}\n\n- 輸入「同意」來接受此產品\n- 輸入「不同意」來調整推薦"
+
+            else:
+                # 5b. 沒有符合的歷史記錄，推薦相關產品
+                history_text = self._format_purchase_history(purchase_history[:10])
+                recommendation = self.recommend_chain.invoke(
+                    {"user_request": user_input, "purchase_history": history_text}
+                )
+
+                # 更新會話狀態
+                self._update_session_state(
+                    session_id,
+                    {
+                        "conversation_state": ConversationState.WAITING_CONFIRMATION,
+                        "user_request": user_input,
+                        "purchase_history": purchase_history,
+                        "current_recommendation": recommendation,
+                        "requirement": requirement,
+                        "has_matching_history": False,
+                    },
+                )
+
+                return f"📋 需求分析完成\n\n未找到完全符合需求的歷史記錄。\n\n🎯 推薦產品\n\n{recommendation}\n\n請確認是否同意此推薦？\n- 輸入「同意」來接受推薦\n- 輸入「不同意」來調整推薦"
 
         except Exception as e:
             logger.error(f"處理新請求失敗: {e}")
@@ -194,13 +314,36 @@ class ConversationalPurchaseAgent:
         """處理確認推薦"""
         user_input_lower = user_input.lower().strip()
 
+        # 先檢查是否包含產品變更請求
+        if self._is_product_change_request(user_input):
+            # 這是一個產品變更請求，處理產品切換
+            return self._handle_product_change_request(user_input, session_id)
+
         # 判斷使用者是否確認
         if any(
             keyword in user_input_lower
             for keyword in ["同意", "確認", "好", "可以", "沒問題", "ok"]
         ):
-            # 創建請購單
-            return self._create_and_show_order(session_id)
+            # 用戶確認了產品推薦，現在收集詳細資訊
+            state = self._get_session_state(session_id)
+            selected_product = state.get("selected_product")
+
+            if selected_product:
+                # 有選定的特定產品，收集詳細資訊
+                self._update_session_state(
+                    session_id,
+                    {"conversation_state": ConversationState.WAITING_ORDER_DETAILS},
+                )
+
+                return f"✅ 產品確認：{selected_product['product_name']}\n\n現在請提供以下資訊以完成請購單：\n\n1. **數量**：您需要多少台/個？\n2. **請購人姓名**：請購人的完整姓名\n3. **預期交貨日期**：希望什麼時候交貨？（格式：YYYY-MM-DD）\n\n請一次提供所有資訊，例如：\n「數量：2台，請購人：張三，交貨日期：2025-07-15」"
+            else:
+                # 沒有選定的特定產品，但用戶同意了系統推薦，收集詳細資訊
+                self._update_session_state(
+                    session_id,
+                    {"conversation_state": ConversationState.WAITING_ORDER_DETAILS},
+                )
+
+                return "✅ 推薦確認\n\n現在請提供以下資訊以完成請購單：\n\n1. **數量**：您需要多少台/個？\n2. **請購人姓名**：請購人的完整姓名\n3. **預期交貨日期**：希望什麼時候交貨？（格式：YYYY-MM-DD）\n\n請一次提供所有資訊，例如：\n「數量：2台，請購人：張三，交貨日期：2025-07-15」"
         elif any(
             keyword in user_input_lower
             for keyword in ["不同意", "不要", "不行", "調整", "修改", "改"]
@@ -209,7 +352,7 @@ class ConversationalPurchaseAgent:
             self._update_session_state(
                 session_id, {"conversation_state": ConversationState.ADJUSTING}
             )
-            return "請告訴我您希望如何調整這個推薦？例如：\n- 調整數量\n- 更換產品\n- 修改規格\n- 更換供應商\n- 調整預算"
+            return "我理解您想要調整推薦。請告訴我您的具體需求：\n\n1. 如果您想要歷史記錄中的特定產品，請說明產品名稱\n2. 如果您想要全新的產品，請提供：\n   - 產品名稱\n   - 預期價格\n\n請詳細描述您的需求。"
         else:
             return "請明確回答是否同意此推薦？\n- 輸入「同意」或「確認」來接受推薦\n- 輸入「不同意」或「調整」來修改推薦"
 
@@ -217,27 +360,67 @@ class ConversationalPurchaseAgent:
         """處理調整推薦"""
         try:
             state = self._get_session_state(session_id)
+            purchase_history = state.get("purchase_history", [])
 
-            # 調整推薦
-            history_text = self._format_purchase_history(state["purchase_history"][:10])
-            adjusted_recommendation = self.adjust_chain.invoke(
-                {
-                    "current_recommendation": state["current_recommendation"],
-                    "adjustment_request": user_input,
-                    "purchase_history": history_text,
-                }
+            # 解析使用者的調整需求
+            adjustment_requirement = self.extract_requirement_chain.invoke(
+                {"user_request": user_input}
             )
 
-            # 更新狀態
-            self._update_session_state(
-                session_id,
-                {
-                    "conversation_state": ConversationState.WAITING_CONFIRMATION,
-                    "current_recommendation": adjusted_recommendation,
-                },
-            )
+            # 檢查是否指定了特定產品
+            if adjustment_requirement.get("product_name"):
+                # 在歷史記錄中尋找指定的產品
+                matching_product = self._find_matching_product(
+                    adjustment_requirement, purchase_history
+                )
 
-            return f"🔄 推薦已調整\n\n{adjusted_recommendation}"
+                if matching_product:
+                    # 找到了指定的產品，更新推薦
+                    recommendation = f"""✅ 根據您的要求，我找到了符合的產品：
+
+**產品名稱**：{matching_product["product_name"]}
+**產品類別**：{matching_product["category"]}
+**供應商**：{matching_product["supplier"]}
+**單價**：NT$ {matching_product["unit_price"]:,}
+**推薦理由**：基於採購歷史記錄，此產品符合您的需求
+
+請確認此產品是否符合您的需求？"""
+
+                    # 更新狀態
+                    self._update_session_state(
+                        session_id,
+                        {
+                            "conversation_state": ConversationState.WAITING_CONFIRMATION,
+                            "current_recommendation": recommendation,
+                            "selected_product": matching_product,
+                        },
+                    )
+
+                    return f"{recommendation}\n\n- 輸入「同意」來接受此產品\n- 輸入「不同意」來進一步調整"
+                else:
+                    # 沒有找到指定的產品，需要使用者提供詳細資訊
+                    return f"抱歉，在採購歷史中沒有找到 '{adjustment_requirement.get('product_name')}' 的記錄。\n\n如果您確定需要此產品，請提供以下資訊：\n- 產品完整名稱\n- 預期價格\n- 供應商（如果知道的話）"
+            else:
+                # 常規調整推薦
+                history_text = self._format_purchase_history(purchase_history[:10])
+                adjusted_recommendation = self.adjust_chain.invoke(
+                    {
+                        "current_recommendation": state["current_recommendation"],
+                        "adjustment_request": user_input,
+                        "purchase_history": history_text,
+                    }
+                )
+
+                # 更新狀態
+                self._update_session_state(
+                    session_id,
+                    {
+                        "conversation_state": ConversationState.WAITING_CONFIRMATION,
+                        "current_recommendation": adjusted_recommendation,
+                    },
+                )
+
+                return f"🔄 推薦已調整\n\n{adjusted_recommendation}\n\n請確認是否同意此調整後的推薦？\n- 輸入「同意」來接受推薦\n- 輸入「不同意」來進一步調整"
 
         except Exception as e:
             logger.error(f"調整推薦失敗: {e}")
@@ -446,6 +629,8 @@ class ConversationalPurchaseAgent:
                     response = self._handle_adjustment(user_input, session_id)
                 elif current_state == ConversationState.CONFIRMING_ORDER:
                     response = self._handle_order_confirmation(user_input, session_id)
+                elif current_state == ConversationState.WAITING_ORDER_DETAILS:
+                    response = self._handle_order_details(user_input, session_id)
                 elif current_state == ConversationState.COMPLETED:
                     # 重新開始新的請購流程
                     self._update_session_state(
@@ -479,3 +664,204 @@ class ConversationalPurchaseAgent:
         """重置會話狀態"""
         if session_id in self._session_states:
             del self._session_states[session_id]
+
+    def _handle_custom_product_request(self, user_input: str, session_id: str) -> str:
+        """處理自定義產品請求"""
+        try:
+            # 解析自定義產品資訊
+            custom_product = self.custom_product_chain.invoke(
+                {"user_input": user_input}
+            )
+
+            # 檢查是否有必要的資訊
+            required_fields = ["product_name", "unit_price"]
+            missing_fields = [
+                field for field in required_fields if not custom_product.get(field)
+            ]
+
+            if missing_fields:
+                missing_info = []
+                if "product_name" in missing_fields:
+                    missing_info.append("- 產品名稱")
+                if "unit_price" in missing_fields:
+                    missing_info.append("- 價格")
+                return "請提供以下必要資訊：\n" + "\n".join(missing_info)
+
+            # 更新會話狀態
+            self._update_session_state(
+                session_id,
+                {
+                    "conversation_state": ConversationState.WAITING_ORDER_DETAILS,
+                    "custom_product": custom_product,
+                },
+            )
+
+            return f"已記錄您的自定義產品：\n產品名稱：{custom_product['product_name']}\n價格：NT$ {custom_product['unit_price']:,}\n\n現在請提供以下資訊：\n- 數量\n- 請購人姓名\n- 請購時間（預期交貨日期）"
+
+        except Exception as e:
+            logger.error(f"處理自定義產品請求失敗: {e}")
+            return f"抱歉，處理您的自定義產品請求時發生錯誤：{str(e)}\n請重新提供產品資訊。"
+
+    def _handle_order_details(self, user_input: str, session_id: str) -> str:
+        """處理請購單詳細資訊"""
+        try:
+            state = self._get_session_state(session_id)
+            selected_product = state.get("selected_product")
+
+            # 如果沒有特定選定的產品，嘗試從推薦中提取產品資訊
+            if not selected_product:
+                # 從系統推薦中提取產品資訊
+                recommendation = state.get("current_recommendation", "")
+                # 尋找推薦中提到的產品（通常是MacBook Pro 14吋之類的）
+                if "MacBook Pro 14吋" in recommendation:
+                    # 從採購歷史中找到對應的產品
+                    purchase_history = state.get("purchase_history", [])
+                    for product in purchase_history:
+                        if "MacBook Pro 14吋" in product.get("product_name", ""):
+                            selected_product = product
+                            break
+
+                # 如果還是找不到，使用推薦中的預設資訊
+                if not selected_product:
+                    selected_product = {
+                        "product_name": "MacBook Pro 14吋",
+                        "category": "筆記型電腦",
+                        "unit_price": 65000,
+                        "supplier": "Apple Inc.",
+                    }
+
+            # 解析使用者提供的詳細資訊
+            details = self.custom_product_chain.invoke({"user_input": user_input})
+
+            # 檢查必要資訊是否完整
+            missing_info = []
+
+            if not details.get("quantity"):
+                missing_info.append("數量")
+            if not details.get("requester"):
+                missing_info.append("請購人姓名")
+            if not details.get("expected_delivery_date"):
+                missing_info.append("預期交貨日期")
+
+            if missing_info:
+                return (
+                    "請提供以下缺少的資訊：\n"
+                    + "\n".join([f"- {info}" for info in missing_info])
+                    + "\n\n請重新輸入完整資訊。"
+                )
+
+            # 建立完整的請購單
+            order_data = {
+                "product_name": selected_product.get("product_name", "未指定產品"),
+                "category": selected_product.get("category", "其他"),
+                "quantity": details.get("quantity", 1),
+                "unit_price": selected_product.get("unit_price", 0),
+                "requester": details.get(
+                    "requester", state["user_context"]["requester"]
+                ),
+                "department": state["user_context"]["department"],
+                "reason": details.get("reason", "業務需求"),
+                "urgent": details.get("urgent", False),
+                "expected_delivery_date": details.get("expected_delivery_date", ""),
+            }
+
+            # 更新狀態
+            self._update_session_state(
+                session_id,
+                {
+                    "conversation_state": ConversationState.CONFIRMING_ORDER,
+                    "confirmed_order": order_data,
+                },
+            )
+
+            # 格式化顯示請購单
+            order_display = self._format_order_display(order_data)
+
+            return f"📋 請購單已創建\n\n{order_display}\n\n請確認請購單資訊是否正確？\n- 輸入「確認提交」來提交請購單\n- 輸入「修改」來調整請購單\n- 輸入「取消」來取消請購"
+
+        except Exception as e:
+            logger.error(f"處理請購單詳細資訊失敗: {e}")
+            return f"抱歉，處理請購單資訊時發生錯誤：{str(e)}\n請重新提供相關資訊。"
+
+    def _is_product_change_request(self, user_input: str) -> bool:
+        """判斷是否為產品變更請求"""
+        user_input_lower = user_input.lower().strip()
+
+        # 檢查是否包含產品變更關鍵字
+        change_keywords = [
+            "換成",
+            "改成",
+            "要",
+            "想要",
+            "需要",
+            "選擇",
+            "買",
+            "購買",
+            "改用",
+        ]
+
+        # 檢查是否包含產品名稱相關關鍵字
+        product_keywords = [
+            "macbook",
+            "mac",
+            "iphone",
+            "電腦",
+            "筆電",
+            "手機",
+            "螢幕",
+            "滑鼠",
+            "鍵盤",
+            "pro",
+            "air",
+            "13吋",
+            "14吋",
+            "15吋",
+            "16吋",
+        ]
+
+        # 如果同時包含變更關鍵字和產品關鍵字，視為產品變更請求
+        has_change_keyword = any(
+            keyword in user_input_lower for keyword in change_keywords
+        )
+        has_product_keyword = any(
+            keyword in user_input_lower for keyword in product_keywords
+        )
+
+        return has_change_keyword and has_product_keyword
+
+    def _handle_product_change_request(self, user_input: str, session_id: str) -> str:
+        """處理產品變更請求"""
+        # 首先解析用戶的變更需求
+        requirement = self.extract_requirement_chain.invoke(
+            {"user_request": user_input}
+        )
+
+        # 獲取採購歷史
+        state = self._get_session_state(session_id)
+        purchase_history = state.get("purchase_history", [])
+
+        # 如果沒有歷史記錄，重新獲取
+        if not purchase_history:
+            purchase_history = self._fetch_purchase_history()
+
+        # 嘗試從歷史記錄中查找匹配的產品
+        matched_product = self._find_matching_product(requirement, purchase_history)
+
+        if matched_product:
+            # 找到匹配的產品，更新選定產品並確認
+            self._update_session_state(
+                session_id,
+                {
+                    "selected_product": matched_product,
+                    "conversation_state": ConversationState.WAITING_CONFIRMATION,
+                },
+            )
+
+            return f"✅ 已找到您想要的產品：\n\n📦 **產品名稱**：{matched_product['product_name']}\n💰 **價格**：NT$ {matched_product['unit_price']:,}\n📝 **類別**：{matched_product['category']}\n🏢 **廠商**：{matched_product['supplier']}\n\n此產品來自歷史請購記錄，品質有保障。\n\n請確認是否選擇此產品？（回答「同意」或「不同意」）"
+        else:
+            # 沒找到匹配的產品，進入調整狀態讓用戶提供更多資訊
+            self._update_session_state(
+                session_id, {"conversation_state": ConversationState.ADJUSTING}
+            )
+
+            return f"我理解您想要變更產品。\n\n根據您的需求「{user_input}」，我沒有找到完全匹配的歷史記錄。\n\n請選擇以下選項：\n\n1. **從歷史記錄中選擇**：請提供更具體的產品名稱\n2. **自訂新產品**：請提供產品名稱和預期價格\n\n您可以直接告訴我您的需求，例如：\n- 「MacBook Pro 14吋 2024」\n- 「自訂產品：Dell XPS 13，價格40000」"

@@ -17,7 +17,7 @@ agent_config = PurchaseAgentConfig(
     openai_api_key=os.getenv("OPENAI_API_KEY", ""),
     openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     default_requester="系統使用者",
-    default_department="IT部門"
+    default_department="IT部門",
 )
 
 # 全域 AI Agent 實例
@@ -37,6 +37,19 @@ PURCHASE_HISTORY = [
         "status": "已完成",
         "requester": "張小明",
         "department": "IT部門",
+    },
+    {
+        "purchase_id": "PH001A",
+        "product_name": "MacBook Pro 14吋",
+        "category": "筆記型電腦",
+        "supplier": "Apple Inc.",
+        "quantity": 5,
+        "unit_price": 65000,
+        "total_amount": 325000,
+        "purchase_date": "2024-12-12",
+        "status": "已完成",
+        "requester": "王小美",
+        "department": "設計部門",
     },
     {
         "purchase_id": "PH002",
@@ -470,37 +483,35 @@ def chat_with_agent():
     """與 AI Agent 對話"""
     try:
         data = request.get_json()
-        
+
         if not data or "message" not in data:
-            return jsonify({
-                "status": "error",
-                "message": "請提供對話訊息"
-            }), 400
-        
+            return jsonify({"status": "error", "message": "請提供對話訊息"}), 400
+
         user_message = data["message"]
         session_id = data.get("session_id", "default")
-        
+
         # 呼叫 AI Agent 進行對話
         response = ai_agent.chat(user_message, session_id)
-        
+
         # 獲取當前會話狀態
         session_status = ai_agent.get_session_status(session_id)
-        
-        return jsonify({
-            "status": "success",
-            "message": "對話處理完成",
-            "response": response,
-            "session_id": session_id,
-            "conversation_state": session_status.get("conversation_state"),
-            "has_recommendation": session_status.get("current_recommendation") is not None,
-            "has_confirmed_order": session_status.get("confirmed_order") is not None
-        })
-        
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": "對話處理完成",
+                "response": response,
+                "session_id": session_id,
+                "conversation_state": session_status.get("conversation_state"),
+                "has_recommendation": session_status.get("current_recommendation")
+                is not None,
+                "has_confirmed_order": session_status.get("confirmed_order")
+                is not None,
+            }
+        )
+
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"對話處理失敗: {str(e)}"
-        }), 500
+        return jsonify({"status": "error", "message": f"對話處理失敗: {str(e)}"}), 500
 
 
 @app.route("/api/chat/session/<session_id>", methods=["GET"])
@@ -508,19 +519,20 @@ def get_session_status(session_id):
     """獲取會話狀態"""
     try:
         session_status = ai_agent.get_session_status(session_id)
-        
-        return jsonify({
-            "status": "success",
-            "message": "成功獲取會話狀態",
-            "session_id": session_id,
-            "data": session_status
-        })
-        
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": "成功獲取會話狀態",
+                "session_id": session_id,
+                "data": session_status,
+            }
+        )
+
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"獲取會話狀態失敗: {str(e)}"
-        }), 500
+        return jsonify(
+            {"status": "error", "message": f"獲取會話狀態失敗: {str(e)}"}
+        ), 500
 
 
 @app.route("/api/chat/session/<session_id>", methods=["DELETE"])
@@ -528,18 +540,17 @@ def reset_session(session_id):
     """重置會話狀態"""
     try:
         ai_agent.reset_session(session_id)
-        
-        return jsonify({
-            "status": "success",
-            "message": f"會話 {session_id} 已重置",
-            "session_id": session_id
-        })
-        
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": f"會話 {session_id} 已重置",
+                "session_id": session_id,
+            }
+        )
+
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"重置會話失敗: {str(e)}"
-        }), 500
+        return jsonify({"status": "error", "message": f"重置會話失敗: {str(e)}"}), 500
 
 
 @app.route("/api/chat/sessions", methods=["GET"])
@@ -548,31 +559,36 @@ def get_all_sessions():
     try:
         # 獲取所有會話 ID（從 AI Agent 的內部狀態）
         session_ids = list(ai_agent._session_states.keys())
-        
+
         sessions_info = []
         for session_id in session_ids:
             session_status = ai_agent.get_session_status(session_id)
-            sessions_info.append({
-                "session_id": session_id,
-                "conversation_state": session_status.get("conversation_state"),
-                "last_request": session_status.get("user_request", ""),
-                "chat_count": len(session_status.get("chat_history", [])),
-                "has_recommendation": session_status.get("current_recommendation") is not None,
-                "has_confirmed_order": session_status.get("confirmed_order") is not None
-            })
-        
-        return jsonify({
-            "status": "success",
-            "message": "成功獲取所有會話",
-            "total_sessions": len(sessions_info),
-            "data": sessions_info
-        })
-        
+            sessions_info.append(
+                {
+                    "session_id": session_id,
+                    "conversation_state": session_status.get("conversation_state"),
+                    "last_request": session_status.get("user_request", ""),
+                    "chat_count": len(session_status.get("chat_history", [])),
+                    "has_recommendation": session_status.get("current_recommendation")
+                    is not None,
+                    "has_confirmed_order": session_status.get("confirmed_order")
+                    is not None,
+                }
+            )
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": "成功獲取所有會話",
+                "total_sessions": len(sessions_info),
+                "data": sessions_info,
+            }
+        )
+
     except Exception as e:
-        return jsonify({
-            "status": "error",
-            "message": f"獲取會話列表失敗: {str(e)}"
-        }), 500
+        return jsonify(
+            {"status": "error", "message": f"獲取會話列表失敗: {str(e)}"}
+        ), 500
 
 
 @app.route("/", methods=["GET"])
@@ -587,7 +603,7 @@ def home():
                 "自動產品推薦",
                 "採購歷史分析",
                 "庫存資訊查詢",
-                "請購單管理"
+                "請購單管理",
             ],
             "available_endpoints": {
                 "對話式請購": "/api/chat (POST)",
@@ -608,14 +624,11 @@ def home():
                     "url": "/api/chat",
                     "body": {
                         "message": "我需要採購一台筆記型電腦",
-                        "session_id": "user123"
-                    }
+                        "session_id": "user123",
+                    },
                 },
-                "查看會話狀態": {
-                    "method": "GET",
-                    "url": "/api/chat/session/user123"
-                }
-            }
+                "查看會話狀態": {"method": "GET", "url": "/api/chat/session/user123"},
+            },
         }
     )
 

@@ -19,6 +19,7 @@ class ConversationState(str, Enum):
     WAITING_CONFIRMATION = "waiting_confirmation"  # 等待確認推薦
     ADJUSTING = "adjusting"  # 調整推薦中
     CONFIRMING_ORDER = "confirming_order"  # 確認請購單
+    WAITING_ORDER_DETAILS = "waiting_order_details"  # 等待請購單詳細資訊
     SUBMITTING = "submitting"  # 提交請購單
     COMPLETED = "completed"  # 完成
     ERROR = "error"  # 錯誤狀態
