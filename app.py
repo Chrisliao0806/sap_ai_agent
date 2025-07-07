@@ -1157,8 +1157,11 @@ def create_purchase_order_from_request(request_id):
                 }
             ), 400
 
-        # 獲取請求參數
-        data = request.get_json() or {}
+        # 獲取請求參數 - 修復JSON解析問題
+        try:
+            data = request.get_json() or {}
+        except Exception:
+            data = {}
 
         # 根據產品名稱找到對應的供應商
         supplier_id = None
