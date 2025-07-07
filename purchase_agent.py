@@ -732,18 +732,19 @@ class ConversationalPurchaseAgent:
 單價：NT$ {selected_product.get("unit_price", 0):,}
 供應商：{selected_product.get("supplier", "N/A")}"""
 
-            # 獲取已收集的資訊（如果有的話）
-            if "collected_order_info" not in state:
+            # 獲取已收集的資訊（如果有的話）- 修复 NoneType 错誤
+            collected_info = state.get("collected_order_info")
+            if collected_info is None or not isinstance(collected_info, dict):
                 # 初始化收集資訊 - 只收集必要欄位
-                state["collected_order_info"] = {
+                collected_info = {
                     "quantity": None,
                     "requester": None,
                     "expected_delivery_date": None,
                 }
                 # 更新會話狀態
-                self._update_session_state(session_id, state)
-
-            collected_info = state["collected_order_info"]
+                self._update_session_state(
+                    session_id, {"collected_order_info": collected_info}
+                )
 
             # 使用智能資料收集鏈分析用戶輸入
             try:
@@ -774,6 +775,14 @@ class ConversationalPurchaseAgent:
                 updated_collected_info = {}
 
             # 確保不會丟失已收集的資訊 - 合併舊資訊和新資訊
+            # 修复：确保 collected_info 是字典对象
+            if not isinstance(collected_info, dict):
+                collected_info = {
+                    "quantity": None,
+                    "requester": None,
+                    "expected_delivery_date": None,
+                }
+
             final_collected_info = collected_info.copy()
             for key, value in updated_collected_info.items():
                 if value is not None:  # 只有在新值不為 None 時才更新
