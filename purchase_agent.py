@@ -102,6 +102,11 @@ class ConversationalPurchaseAgent:
             | self.llm
             | JsonOutputParser()
         )
+        self.extract_product_from_recommendation_chain = (
+            PurchasePrompts.get_extract_product_from_recommendation_prompt()
+            | self.llm
+            | JsonOutputParser()
+        )
 
     def _get_session_state(self, session_id: str) -> Dict:
         """獲取會話狀態"""
@@ -299,9 +304,6 @@ class ConversationalPurchaseAgent:
 
     def _handle_confirmation(self, user_input: str, session_id: str) -> str:
         """處理確認推薦"""
-        # 注意：產品變更判斷現在由 LLM 在意圖分類中處理
-        # 這裡只處理純粹的確認或拒絕
-
         user_input_lower = user_input.lower().strip()
 
         # 判斷使用者是否確認
@@ -309,26 +311,81 @@ class ConversationalPurchaseAgent:
             keyword in user_input_lower
             for keyword in ["同意", "確認", "好", "可以", "沒問題", "ok"]
         ):
-            # 用戶確認了產品推薦，現在收集詳細資訊
+            # 用戶確認了產品推薦，現在使用 LLM 智能提取確切的產品資訊
             state = self._get_session_state(session_id)
-            selected_product = state.get("selected_product")
+            current_recommendation = state.get("current_recommendation", "")
 
-            if selected_product:
-                # 有選定的特定產品，收集詳細資訊
-                self._update_session_state(
-                    session_id,
-                    {"conversation_state": ConversationState.WAITING_ORDER_DETAILS},
+            try:
+                purchase_history = state.get("purchase_history", [])
+                history_text = self._format_purchase_history(purchase_history)
+
+                # 使用 LLM 智能提取推薦中的具體產品資訊
+                product_extraction_result = (
+                    self.extract_product_from_recommendation_chain.invoke(
+                        {
+                            "recommendation": current_recommendation,
+                            "purchase_history": history_text,
+                        }
+                    )
                 )
 
-                return f"✅ 產品確認：{selected_product['product_name']}\n\n現在請提供以下資訊以完成請購單：\n\n1. **數量**：您需要多少台/個？\n2. **請購人姓名**：請購人的完整姓名\n3. **預期交貨日期**：希望什麼時候交貨？（格式：YYYY-MM-DD）\n\n請一次提供所有資訊，例如：\n「數量：2台，請購人：張三，交貨日期：2025-07-15」"
-            else:
-                # 沒有選定的特定產品，但用戶同意了系統推薦，收集詳細資訊
+                logger.info(f"產品提取結果: {product_extraction_result}")
+
+                # 從提取結果中獲取產品名稱和完整資訊
+                if (
+                    product_extraction_result
+                    and "recommended_product" in product_extraction_result
+                ):
+                    recommended_product = product_extraction_result[
+                        "recommended_product"
+                    ]
+                    product_name = recommended_product.get("product_name", "推薦產品")
+
+                    # 確保產品資訊完整
+                    if "category" not in recommended_product:
+                        recommended_product["category"] = "電腦設備"
+                    if "supplier" not in recommended_product:
+                        recommended_product["supplier"] = "未指定供應商"
+
+                    # 更新 selected_product 以便後續使用
+                    self._update_session_state(
+                        session_id, {"selected_product": recommended_product}
+                    )
+                else:
+                    # 如果 LLM 提取失敗，使用通用名稱
+                    product_name = "推薦產品"
+                    recommended_product = {
+                        "product_name": product_name,
+                        "category": "電腦設備",
+                        "unit_price": 0,
+                        "supplier": "未指定供應商",
+                    }
+                    self._update_session_state(
+                        session_id, {"selected_product": recommended_product}
+                    )
+
+            except Exception as e:
+                logger.error(f"LLM 產品提取失敗: {e}")
+                # 如果完全失敗，使用通用名稱
+                product_name = "推薦產品"
+                recommended_product = {
+                    "product_name": product_name,
+                    "category": "電腦設備",
+                    "unit_price": 0,
+                    "supplier": "未指定供應商",
+                }
                 self._update_session_state(
-                    session_id,
-                    {"conversation_state": ConversationState.WAITING_ORDER_DETAILS},
+                    session_id, {"selected_product": recommended_product}
                 )
 
-                return "✅ 推薦確認\n\n現在請提供以下資訊以完成請購單：\n\n1. **數量**：您需要多少台/個？\n2. **請購人姓名**：請購人的完整姓名\n3. **預期交貨日期**：希望什麼時候交貨？（格式：YYYY-MM-DD）\n\n請一次提供所有資訊，例如：\n「數量：2台，請購人：張三，交貨日期：2025-07-15」"
+            # 更新會話狀態
+            self._update_session_state(
+                session_id,
+                {"conversation_state": ConversationState.WAITING_ORDER_DETAILS},
+            )
+
+            return f"✅ 產品確認：{product_name}\n\n現在請提供以下資訊以完成請購單：\n\n1. **數量**：您需要多少台/個？\n2. **請購人姓名**：請購人的完整姓名\n3. **預期交貨日期**：希望什麼時候交貨？（格式：YYYY-MM-DD）\n\n請一次提供所有資訊，例如：\n「數量：2台，請購人：張三，交貨日期：2025-07-15」"
+
         elif any(
             keyword in user_input_lower
             for keyword in ["不同意", "不要", "不行", "調整", "修改", "改"]
@@ -697,33 +754,50 @@ class ConversationalPurchaseAgent:
             state = self._get_session_state(session_id)
             selected_product = state.get("selected_product")
 
-            # 如果沒有特定選定的產品，嘗試從推薦中提取產品資訊
+            # 如果沒有特定選定的產品，使用 LLM 從推薦中提取產品資訊
             if not selected_product:
-                # 從系統推薦中提取產品資訊
                 recommendation = state.get("current_recommendation", "")
-                # 尋找推薦中提到的產品（通常是MacBook Pro 14吋之類的）
-                if "MacBook Pro 14吋" in recommendation:
-                    # 從採購歷史中找到對應的產品
-                    purchase_history = state.get("purchase_history", [])
-                    for product in purchase_history:
-                        if "MacBook Pro 14吋" in product.get("product_name", ""):
-                            selected_product = product
-                            break
-                elif "MacBook Pro 16吋" in recommendation:
-                    # 從採購歷史中找到對應的產品
-                    purchase_history = state.get("purchase_history", [])
-                    for product in purchase_history:
-                        if "MacBook Pro 16吋" in product.get("product_name", ""):
-                            selected_product = product
-                            break
+                purchase_history = state.get("purchase_history", [])
 
-                # 如果還是找不到，使用推薦中的預設資訊
-                if not selected_product:
+                # 使用 LLM 智能提取產品資訊（替換硬編碼邏輯）
+                try:
+                    history_text = self._format_purchase_history(purchase_history)
+                    product_extraction_result = (
+                        self.extract_product_from_recommendation_chain.invoke(
+                            {
+                                "recommendation": recommendation,
+                                "purchase_history": history_text,
+                            }
+                        )
+                    )
+
+                    logger.info(f"LLM 產品提取結果: {product_extraction_result}")
+
+                    # 從提取結果中獲取產品資訊
+                    if (
+                        product_extraction_result
+                        and "recommended_product" in product_extraction_result
+                    ):
+                        selected_product = product_extraction_result[
+                            "recommended_product"
+                        ]
+
+                        # 確保產品資訊格式正確
+                        if isinstance(selected_product, dict):
+                            # 補充可能缺少的欄位
+                            if "category" not in selected_product:
+                                selected_product["category"] = "其他"
+                            if "supplier" not in selected_product:
+                                selected_product["supplier"] = "未指定供應商"
+
+                except Exception as e:
+                    logger.error(f"LLM 產品提取失敗: {e}")
+                    # 作為備用方案，使用通用產品資訊
                     selected_product = {
-                        "product_name": "MacBook Pro 16吋",
-                        "category": "筆記型電腦",
-                        "unit_price": 75000,
-                        "supplier": "Apple Inc.",
+                        "product_name": "推薦產品",
+                        "category": "其他",
+                        "unit_price": 0,
+                        "supplier": "未指定供應商",
                     }
 
             # 格式化產品資訊
