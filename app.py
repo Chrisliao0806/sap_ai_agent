@@ -477,6 +477,46 @@ INVENTORY_DATA = [
 # 假數據 - 請購單
 PURCHASE_REQUESTS = {}
 
+# 假數據 - 採購單
+PURCHASE_ORDERS = {}
+
+# 假數據 - 供應商資訊
+SUPPLIERS = {
+    "Apple Inc.": {
+        "supplier_id": "SUP001",
+        "supplier_name": "Apple Inc.",
+        "contact_person": "張經理",
+        "contact_phone": "02-1234-5678",
+        "contact_email": "apple@supplier.com",
+        "address": "台北市信義區信義路五段100號",
+        "payment_terms": "30天付款",
+        "delivery_time": "5-7個工作天",
+        "rating": 4.8,
+    },
+    "Microsoft": {
+        "supplier_id": "SUP002",
+        "supplier_name": "Microsoft",
+        "contact_person": "李經理",
+        "contact_phone": "02-2345-6789",
+        "contact_email": "microsoft@supplier.com",
+        "address": "台北市中山區南京東路二段200號",
+        "payment_terms": "30天付款",
+        "delivery_time": "7-10個工作天",
+        "rating": 4.7,
+    },
+    "Dell Technologies": {
+        "supplier_id": "SUP003",
+        "supplier_name": "Dell Technologies",
+        "contact_person": "王經理",
+        "contact_phone": "02-3456-7890",
+        "contact_email": "dell@supplier.com",
+        "address": "台北市松山區敦化北路300號",
+        "payment_terms": "45天付款",
+        "delivery_time": "10-14個工作天",
+        "rating": 4.6,
+    },
+}
+
 
 @app.route("/api/chat", methods=["POST"])
 def chat_with_agent():
@@ -617,6 +657,11 @@ def home():
                 "創建請購單": "/api/purchase-request (POST)",
                 "查詢請購單": "/api/purchase-request/<request_id>",
                 "所有請購單": "/api/purchase-requests",
+                "供應商資訊": "/api/suppliers",
+                "特定供應商": "/api/suppliers/<supplier_id>",
+                "創建採購單": "/api/purchase-order (POST)",
+                "查詢採購單": "/api/purchase-order/<order_id>",
+                "所有採購單": "/api/purchase-orders",
             },
             "usage_examples": {
                 "開始對話": {
@@ -959,6 +1004,249 @@ def get_all_purchase_requests():
     )
 
 
+@app.route("/api/suppliers", methods=["GET"])
+def get_suppliers():
+    """取得所有供應商資訊"""
+    return jsonify(
+        {
+            "status": "success",
+            "message": "成功取得供應商資訊",
+            "total_suppliers": len(SUPPLIERS),
+            "data": list(SUPPLIERS.values()),
+        }
+    )
+
+
+@app.route("/api/suppliers/<supplier_id>", methods=["GET"])
+def get_supplier(supplier_id):
+    """取得特定供應商資訊"""
+    supplier = next(
+        (s for s in SUPPLIERS.values() if s["supplier_id"] == supplier_id), None
+    )
+
+    if not supplier:
+        return jsonify({"status": "error", "message": f"找不到供應商 {supplier_id}"}), 404
+
+    return jsonify(
+        {"status": "success", "message": "成功取得供應商資訊", "data": supplier}
+    )
+
+
+@app.route("/api/purchase-order", methods=["POST"])
+def create_purchase_order():
+    """創建採購單"""
+    try:
+        data = request.get_json()
+
+        # 驗證必要欄位
+        required_fields = [
+            "supplier_id",
+            "product_name",
+            "quantity",
+            "unit_price",
+            "requester",
+            "department",
+        ]
+        for field in required_fields:
+            if field not in data:
+                return jsonify(
+                    {"status": "error", "message": f"缺少必要欄位: {field}"}
+                ), 400
+
+        # 生成採購單ID
+        order_id = (
+            f"PO{datetime.now().strftime('%Y%m%d')}{str(uuid.uuid4())[:6].upper()}"
+        )
+
+        # 創建採購單
+        purchase_order = {
+            "order_id": order_id,
+            "supplier_id": data["supplier_id"],
+            "product_name": data["product_name"],
+            "category": data.get("category", "3C產品"),
+            "quantity": data["quantity"],
+            "unit_price": data["unit_price"],
+            "total_amount": data["quantity"] * data["unit_price"],
+            "requester": data["requester"],
+            "department": data["department"],
+            "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "已下單",
+            "tracking_number": f"TRK-{order_id}",
+        }
+
+        # 儲存採購單
+        PURCHASE_ORDERS[order_id] = purchase_order
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": "採購單創建成功",
+                "order_id": order_id,
+                "data": purchase_order,
+            }
+        ), 201
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"創建採購單失敗: {str(e)}"}), 500
+
+
+@app.route("/api/purchase-order/<order_id>", methods=["GET"])
+def get_purchase_order(order_id):
+    """查詢特定採購單資訊"""
+    if order_id not in PURCHASE_ORDERS:
+        return jsonify(
+            {"status": "error", "message": f"找不到採購單 {order_id}"}
+        ), 404
+
+    purchase_order = PURCHASE_ORDERS[order_id]
+
+    return jsonify(
+        {"status": "success", "message": "成功取得採購單資訊", "data": purchase_order}
+    )
+
+
+@app.route("/api/purchase-orders", methods=["GET"])
+def get_all_purchase_orders():
+    """取得所有採購單"""
+    # 支援查詢參數
+    supplier = request.args.get("supplier")
+    status = request.args.get("status")
+
+    filtered_orders = list(PURCHASE_ORDERS.values())
+
+    # 根據供應商篩選
+    if supplier:
+        filtered_orders = [
+            o for o in filtered_orders if supplier.lower() in o["supplier_id"].lower()
+        ]
+
+    # 根據狀態篩選
+    if status:
+        filtered_orders = [
+            o for o in filtered_orders if status.lower() in o["status"].lower()
+        ]
+
+    return jsonify(
+        {
+            "status": "success",
+            "message": "成功取得所有採購單",
+            "total_orders": len(filtered_orders),
+            "data": filtered_orders,
+        }
+    )
+
+
+@app.route("/api/purchase-order/from-request/<request_id>", methods=["POST"])
+def create_purchase_order_from_request(request_id):
+    """根據請購單創建採購單"""
+    try:
+        # 檢查請購單是否存在
+        if request_id not in PURCHASE_REQUESTS:
+            return jsonify(
+                {"status": "error", "message": f"找不到請購單 {request_id}"}
+            ), 404
+
+        purchase_request = PURCHASE_REQUESTS[request_id]
+
+        # 檢查請購單狀態是否為"待審核"
+        if purchase_request["status"] != "待審核":
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": f"請購單狀態為 {purchase_request['status']}，無法創建採購單。只有狀態為'待審核'的請購單可以創建採購單。"
+                }
+            ), 400
+
+        # 獲取請求參數
+        data = request.get_json() or {}
+
+        # 根據產品名稱找到對應的供應商
+        supplier_id = None
+        product_name = purchase_request["product_name"]
+
+        # 簡單的供應商匹配邏輯
+        if "MacBook" in product_name or "iPhone" in product_name or "iPad" in product_name:
+            supplier_id = "SUP001"  # Apple Inc.
+        elif "Surface" in product_name:
+            supplier_id = "SUP002"  # Microsoft
+        elif "Dell" in product_name:
+            supplier_id = "SUP003"  # Dell Technologies
+        else:
+            # 如果無法自動匹配，使用請求中提供的供應商ID
+            supplier_id = data.get("supplier_id")
+            if not supplier_id:
+                return jsonify(
+                    {
+                        "status": "error",
+                        "message": "無法自動匹配供應商，請在請求中提供 supplier_id"
+                    }
+                ), 400
+
+        # 驗證供應商是否存在
+        supplier = next(
+            (s for s in SUPPLIERS.values() if s["supplier_id"] == supplier_id), None
+        )
+        if not supplier:
+            return jsonify(
+                {"status": "error", "message": f"找不到供應商 {supplier_id}"}
+            ), 404
+
+        # 生成採購單ID
+        order_id = (
+            f"PO{datetime.now().strftime('%Y%m%d')}{str(uuid.uuid4())[:6].upper()}"
+        )
+
+        # 創建採購單
+        purchase_order = {
+            "order_id": order_id,
+            "request_id": request_id,  # 關聯請購單
+            "supplier_id": supplier_id,
+            "supplier_name": supplier["supplier_name"],
+            "product_name": purchase_request["product_name"],
+            "category": purchase_request["category"],
+            "quantity": purchase_request["quantity"],
+            "unit_price": purchase_request["unit_price"],
+            "total_amount": purchase_request["total_amount"],
+            "requester": purchase_request["requester"],
+            "department": purchase_request["department"],
+            "order_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "已下單",
+            "expected_delivery_date": (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"),
+            "tracking_number": f"TRK-{order_id}",
+            "supplier_info": {
+                "contact_person": supplier["contact_person"],
+                "contact_phone": supplier["contact_phone"],
+                "contact_email": supplier["contact_email"],
+                "payment_terms": supplier["payment_terms"],
+                "delivery_time": supplier["delivery_time"],
+            },
+        }
+
+        # 儲存採購單
+        PURCHASE_ORDERS[order_id] = purchase_order
+
+        # 更新請購單狀態為"已完成"
+        PURCHASE_REQUESTS[request_id]["status"] = "已完成"
+        PURCHASE_REQUESTS[request_id]["completion_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        PURCHASE_REQUESTS[request_id]["related_order_id"] = order_id
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": "採購單創建成功，請購單狀態已更新為已完成",
+                "order_id": order_id,
+                "request_id": request_id,
+                "data": {
+                    "purchase_order": purchase_order,
+                    "updated_request": PURCHASE_REQUESTS[request_id]
+                }
+            }
+        ), 201
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"創建採購單失敗: {str(e)}"}), 500
+
+
 if __name__ == "__main__":
     print("🚀 假 SAP API 系統啟動中...")
     print("📝 API 文檔:")
@@ -969,5 +1257,10 @@ if __name__ == "__main__":
     print("   - 創建請購: POST /api/purchase-request")
     print("   - 查詢請購: GET /api/purchase-request/<request_id>")
     print("   - 所有請購: GET /api/purchase-requests")
+    print("   - 供應商資訊: GET /api/suppliers")
+    print("   - 特定供應商: GET /api/suppliers/<supplier_id>")
+    print("   - 創建採購單: POST /api/purchase-order")
+    print("   - 查詢採購單: GET /api/purchase-order/<order_id>")
+    print("   - 所有採購單: GET /api/purchase-orders")
     print("🌐 伺服器啟動在: http://localhost:7777")
     app.run(debug=True, host="0.0.0.0", port=7777)
