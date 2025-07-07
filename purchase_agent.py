@@ -817,7 +817,7 @@ class ConversationalPurchaseAgent:
                         "requester", state["user_context"]["requester"]
                     ),
                     "department": state["user_context"]["department"],
-                    "reason": "業務需求",  # 簡化為預設值
+                    "reason": "工作需求",  # 簡化為預設值
                     "urgent": False,  # 簡化為預設值
                     "expected_delivery_date": final_collected_info.get(
                         "expected_delivery_date", ""
