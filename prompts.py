@@ -603,3 +603,49 @@ class PurchasePrompts:
                 ),
             ]
         )
+
+    @staticmethod
+    def get_purchase_request_status_validation_prompt():
+        """請購單狀態驗證提示"""
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """你是一個專業的採購單狀態分析師。請根據請購單的詳細資訊，分析該請購單的當前狀態並判斷是否可以進行審核。
+
+分析要點：
+1. 檢查請購單的當前狀態
+2. 判斷該狀態是否允許進行審核
+3. 如果不能審核，提供清楚的說明
+4. 如果可以審核，確認可以進行下一步流程
+
+狀態判斷規則：
+- 「待審核」狀態：可以進行審核
+- 「已完成」狀態：已經處理完成，不能再審核
+- 「已取消」狀態：已取消，不能審核
+- 「審核中」狀態：正在審核中，可能需要等待
+- 其他狀態：根據具體情況判斷
+
+請根據實際狀態資訊進行智能判斷，不要硬編碼狀態檢查。
+
+回覆格式：
+```json
+{{
+    "can_review": true/false,
+    "current_status": "請購單當前狀態",
+    "status_explanation": "狀態說明",
+    "next_action": "如果可以審核則為'proceed'，否則為'cannot_proceed'",
+    "user_message": "給使用者的回覆訊息"
+}}
+```""",
+                ),
+                (
+                    "human",
+                    """
+請購單詳細資訊：{purchase_request_info}
+
+請分析該請購單的狀態並判斷是否可以進行審核。
+                """,
+                ),
+            ]
+        )

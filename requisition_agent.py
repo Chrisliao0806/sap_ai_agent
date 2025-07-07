@@ -85,6 +85,11 @@ class RequisitionAgent:
             | self.llm
             | StrOutputParser()
         )
+        self.status_validation_chain = (
+            PurchasePrompts.get_purchase_request_status_validation_prompt()
+            | self.llm
+            | JsonOutputParser()
+        )
 
     def _get_session_state(self, session_id: str) -> Dict:
         """獲取會話狀態"""
@@ -302,9 +307,23 @@ class RequisitionAgent:
             if not purchase_request:
                 return f"找不到請購單 {request_id}，請檢查請購單號是否正確。"
 
-            # 檢查請購單狀態
-            if purchase_request.get("status") != "待審核":
-                return f"請購單 {request_id} 目前狀態為「{purchase_request.get('status')}」，只有狀態為「待審核」的請購單才能進行審核。"
+            # 使用 LLM 進行狀態驗證，而不是硬編碼檢查
+            request_info = self._format_purchase_request(purchase_request)
+            
+            try:
+                status_validation = self.status_validation_chain.invoke(
+                    {"purchase_request_info": request_info}
+                )
+                
+                # 如果不能審核，返回 LLM 提供的訊息
+                if not status_validation.get("can_review", False):
+                    return status_validation.get("user_message", "此請購單目前無法進行審核。")
+                    
+            except Exception as e:
+                logger.error(f"狀態驗證失敗: {e}")
+                # 如果 LLM 驗證失敗，回退到基本檢查
+                if purchase_request.get("status") == "已完成":
+                    return f"請購單 {request_id} 已經處理完成，無需再次審核。"
 
             # 獲取相關的採購歷史和庫存資訊
             product_name = purchase_request.get("product_name", "")
@@ -312,7 +331,6 @@ class RequisitionAgent:
             inventory_data = self._fetch_inventory_data(product_name)
 
             # 格式化資料供 LLM 分析
-            request_info = self._format_purchase_request(purchase_request)
             history_info = self._format_purchase_history(purchase_history)
             inventory_info = self._format_inventory_data(inventory_data)
 
@@ -512,26 +530,26 @@ class RequisitionAgent:
     def _extract_request_id(self, user_input: str) -> Optional[str]:
         """從用戶輸入中提取請購單號"""
         import re
-        
+
         # 更靈活的請購單號提取邏輯
         # 尋找 PR 開頭的請購單號 (支援多種格式)
         patterns = [
-            r'PR\d{8}[A-Z0-9]{6}',  # 原始格式：PR20250107ABCDEF
-            r'PR\d{8}[A-Z0-9]{5,8}',  # 彈性格式：PR20250707655A22
-            r'PR\d{6,8}[A-Z0-9]{4,8}',  # 更彈性的格式
+            r"PR\d{8}[A-Z0-9]{6}",  # 原始格式：PR20250107ABCDEF
+            r"PR\d{8}[A-Z0-9]{5,8}",  # 彈性格式：PR20250707655A22
+            r"PR\d{6,8}[A-Z0-9]{4,8}",  # 更彈性的格式
         ]
-        
+
         for pattern in patterns:
             match = re.search(pattern, user_input.upper())
             if match:
                 return match.group(0)
-        
+
         # 如果找不到標準格式，嘗試從輸入中提取任何看起來像請購單號的內容
         # 尋找任何以 PR 開頭的字串
-        pr_match = re.search(r'PR[A-Z0-9]{8,}', user_input.upper())
+        pr_match = re.search(r"PR[A-Z0-9]{8,}", user_input.upper())
         if pr_match:
             return pr_match.group(0)
-        
+
         return None
 
     def _format_purchase_request(self, purchase_request: Dict) -> str:

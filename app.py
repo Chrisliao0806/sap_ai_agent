@@ -911,51 +911,28 @@ def get_purchase_request(request_id):
 
     purchase_request = PURCHASE_REQUESTS[request_id].copy()
 
-    # 模擬審核進度
-    statuses = ["待審核", "審核中", "已批准", "採購中", "已完成", "已拒絕"]
-    if purchase_request["status"] == "待審核":
-        # 隨機更新狀態（模擬系統運作）
-        if random.random() > 0.5:
-            purchase_request["status"] = random.choice(statuses[1:4])
-            if purchase_request["status"] == "已批准":
-                purchase_request["approval_date"] = datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
-            elif purchase_request["status"] == "已拒絕":
-                purchase_request["rejection_reason"] = "預算不足"
-
     # 添加審核軌跡
     purchase_request["approval_trail"] = [
         {
             "step": 1,
             "approver": "直屬主管",
-            "status": "已批准" if purchase_request["status"] != "待審核" else "待審核",
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            if purchase_request["status"] != "待審核"
-            else None,
-            "comment": "符合部門需求",
+            "status": "待審核",
+            "date": None,
+            "comment": "",
         },
         {
             "step": 2,
             "approver": "部門經理",
-            "status": "已批准"
-            if purchase_request["status"] in ["已批准", "採購中", "已完成"]
-            else "待審核",
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            if purchase_request["status"] in ["已批准", "採購中", "已完成"]
-            else None,
-            "comment": "預算範圍內，同意採購",
+            "status": "待審核",
+            "date": None,
+            "comment": "",
         },
         {
             "step": 3,
             "approver": "財務部門",
-            "status": "已批准"
-            if purchase_request["status"] in ["已批准", "採購中", "已完成"]
-            else "待審核",
-            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            if purchase_request["status"] in ["已批准", "採購中", "已完成"]
-            else None,
-            "comment": "財務審核通過",
+            "status": "待審核",
+            "date": None,
+            "comment": "",
         },
     ]
 
