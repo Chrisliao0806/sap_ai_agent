@@ -446,3 +446,160 @@ class PurchasePrompts:
                 ),
             ]
         )
+
+    # 新增採購專員相關提示
+    @staticmethod
+    def get_requisition_intent_classification_prompt():
+        """採購專員意圖分類提示"""
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """你是一個專業的採購專員助手。請分析採購專員的輸入並判斷其意圖和當前應該的對話狀態。
+
+採購專員對話狀態說明：
+- review_requests: 審核請購單
+- analyze_purchase_decision: 分析採購決策
+- create_purchase_order: 創建採購單
+- confirm_purchase_order: 確認採購單
+- off_topic: 與採購審核無關的話題
+- unclear: 不清楚的輸入
+
+意圖判斷重點：
+1. 如果採購專員想要查看或審核請購單，判斷為 review_requests
+2. 如果採購專員想要分析是否應該創建採購單，判斷為 analyze_purchase_decision
+3. 如果採購專員確認要創建採購單，判斷為 create_purchase_order
+4. 如果採購專員要確認採購單內容，判斷為 confirm_purchase_order
+
+請根據採購專員輸入和當前狀態，判斷其意圖並回傳對應的狀態。
+
+請用JSON格式回覆，包含：
+- intent: 採購專員意圖
+- next_state: 下一個對話狀態  
+- is_procurement_related: 是否與採購相關（布林值）
+- guidance_message: 如果需要引導，提供引導訊息""",
+                ),
+                (
+                    "human",
+                    """
+當前對話狀態：{current_state}
+採購專員輸入：{user_input}
+對話歷史：{chat_history}
+
+請判斷採購專員意圖和下一步狀態。
+                """,
+                ),
+            ]
+        )
+
+    @staticmethod
+    def get_purchase_decision_analysis_prompt():
+        """採購決策分析提示"""
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """你是一個專業的採購決策分析師。請根據請購單資訊、採購歷史和庫存資訊，分析是否應該創建採購單。
+
+分析條件：
+1. 庫存檢查：檢查產品的可用庫存量
+2. 價格比較：比較請購單價格與採購歷史中的價格
+3. 採購建議：基於以上分析決定是否應該創建採購單
+
+創建採購單的條件：
+- 當前沒有庫存或庫存不足
+- 且採購歷史資訊的價格與目前請購單價格相同或請購單價格更低
+
+分析格式：
+```json
+{{
+    "should_create_purchase_order": true/false,
+    "analysis_result": {{
+        "inventory_status": "庫存狀況描述",
+        "price_comparison": "價格比較結果",
+        "recommendation": "採購建議"
+    }},
+    "detailed_explanation": "詳細說明為什麼要/不要創建採購單",
+    "risk_assessment": "風險評估"
+}}
+```
+
+請進行專業且詳細的分析。""",
+                ),
+                (
+                    "human",
+                    """
+請購單資訊：{purchase_request}
+
+採購歷史資料：
+{purchase_history}
+
+庫存資訊：
+{inventory_data}
+
+請分析是否應該創建採購單。
+                """,
+                ),
+            ]
+        )
+
+    @staticmethod
+    def get_create_purchase_order_prompt():
+        """創建採購單提示"""
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """你是一個專業的採購單創建助手。根據通過審核的請購單資訊和採購決策分析，創建正式的採購單。
+
+採購單必須包含以下欄位：
+1. supplier_id - 供應商ID
+2. product_name - 產品名稱
+3. category - 類別
+4. quantity - 數量
+5. unit_price - 單價（整數）
+6. requester - 請購人
+7. department - 部門
+
+根據產品名稱自動匹配供應商：
+- MacBook/iPhone/iPad 相關產品 -> SUP001 (Apple Inc.)
+- Surface 相關產品 -> SUP002 (Microsoft)
+- Dell 相關產品 -> SUP003 (Dell Technologies)
+
+請用 JSON 格式回覆，確保所有欄位名稱正確。""",
+                ),
+                (
+                    "human",
+                    """
+請購單資訊：{purchase_request}
+採購決策分析：{decision_analysis}
+
+請創建採購單。
+                """,
+                ),
+            ]
+        )
+
+    @staticmethod
+    def get_requisition_guidance_prompt():
+        """採購專員引導提示"""
+        return ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """你是一個友善的採購專員助手。使用者的輸入偏離了採購審核主題，請禮貌地將話題導回採購專員的工作相關內容。
+
+請用溫和、專業的方式回應，並提供一些採購審核相關的引導建議。
+使用繁體中文回覆。""",
+                ),
+                (
+                    "human",
+                    """
+採購專員輸入：{user_input}
+當前狀態：{current_state}
+
+請提供引導訊息，將話題導回採購審核相關內容。
+                """,
+                ),
+            ]
+        )

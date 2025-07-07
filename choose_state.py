@@ -23,6 +23,13 @@ class ConversationState(str, Enum):
     SUBMITTING = "submitting"  # 提交請購單
     COMPLETED = "completed"  # 完成
     ERROR = "error"  # 錯誤狀態
+    
+    # 新增採購專員相關狀態
+    REVIEWING_REQUESTS = "reviewing_requests"  # 審核請購單
+    ANALYZING_PURCHASE_DECISION = "analyzing_purchase_decision"  # 分析採購決策
+    CREATING_PURCHASE_ORDER = "creating_purchase_order"  # 創建採購單
+    CONFIRMING_PURCHASE_ORDER = "confirming_purchase_order"  # 確認採購單
+    PURCHASE_ORDER_COMPLETED = "purchase_order_completed"  # 採購單完成
 
 
 class PurchaseRequestState(TypedDict):
