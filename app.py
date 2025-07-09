@@ -1242,13 +1242,13 @@ if __name__ == "__main__":
     print("   - 創建採購單: POST /api/purchase-order")
     print("   - 查詢採購單: GET /api/purchase-order/<order_id>")
     print("   - 所有採購單: GET /api/purchase-orders")
-    print("🌐 伺服器啟動在: http://localhost:7777")
+    print("🌐 伺服器啟動在: http://localhost:13306")
     
     # 判斷是否在開發環境
-    import os
     if os.getenv("FLASK_ENV") == "development":
-        app.run(debug=True, host="0.0.0.0", port=7777)
+        app.run(debug=True, host="0.0.0.0", port=13306)
     else:
         # 生產環境由 Gunicorn 處理
         print("在生產環境中，請使用 Gunicorn 啟動應用程式")
-        print("範例: gunicorn --bind 0.0.0.0:7777 app:app")
+        print("範例: gunicorn --bind 0.0.0.0:13306 app:app")
+        app.run(debug=True, host="0.0.0.0", port=13306)
