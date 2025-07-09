@@ -1,0 +1,41 @@
+services:
+  sap-ai-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sap-ai-agent-app
+    ports:
+      - "7777:7777"
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+      # 您可以在這裡設定環境變數
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    volumes:
+      # 如果需要持久化資料，可以取消註解下面的行
+      # - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - sap-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  sap-network:
+    driver: bridge
+
+volumes:
+  logs:
+    driver: local
