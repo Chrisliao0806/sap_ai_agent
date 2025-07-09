@@ -74,8 +74,7 @@ build() {
 start() {
     print_info "啟動 SAP AI Agent 服務..."
     docker-compose up -d
-    print_success "服務已啟動"
-    print_info "應用程式可在 http://localhost:7777 存取"
+    print_success "服務已啟動"            print_info "應用程式可在 http://localhost:13306 存取"
 }
 
 # 函數：停止服務
@@ -192,7 +191,7 @@ main() {
             create_directories
             build
             start
-            print_success "部署完成！應用程式可在 http://localhost:7777 存取"
+            print_success "部署完成！應用程式可在 http://localhost:13306 存取"
             ;;
         help|--help|-h)
             usage

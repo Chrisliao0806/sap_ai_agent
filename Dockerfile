@@ -37,11 +37,11 @@ RUN useradd --create-home --shell /bin/bash app_user && \
 USER app_user
 
 # 暴露端口
-EXPOSE 7777
+EXPOSE 13306
 
 # 健康檢查
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:7777/ || exit 1
+    CMD curl -f http://localhost:13306/ || exit 1
 
 # 啟動命令 - 使用 Gunicorn 作為生產級 WSGI 伺服器
-CMD ["gunicorn", "--bind", "0.0.0.0:7777", "--workers", "4", "--timeout", "120", "--keep-alive", "2", "--max-requests", "1000", "--max-requests-jitter", "100", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:13306", "--workers", "4", "--timeout", "120", "--keep-alive", "2", "--max-requests", "1000", "--max-requests-jitter", "100", "app:app"]
