@@ -27,9 +27,10 @@ COPY app.py .
 COPY purchase_agent.py .
 COPY prompts.py .
 COPY choose_state.py .
+COPY data_manager.py .
 
-# 創建日誌目錄
-RUN mkdir -p /app/logs
+# 創建日誌目錄和資料目錄
+RUN mkdir -p /app/logs /app/data
 
 # 創建非 root 用戶
 RUN useradd --create-home --shell /bin/bash app_user && \

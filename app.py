@@ -7,9 +7,14 @@ import random
 
 # 導入新的對話式 AI Agent
 from purchase_agent import ConversationalPurchaseAgent, PurchaseAgentConfig
+# 導入資料管理器
+from data_manager import DataManager
 
 app = Flask(__name__)
 CORS(app)
+
+# 初始化資料管理器
+data_manager = DataManager()
 
 # 初始化 AI Agent
 agent_config = PurchaseAgentConfig(
@@ -885,8 +890,8 @@ def create_purchase_request():
             "tracking_number": f"TRK-{request_id}",
         }
 
-        # 儲存請購單
-        PURCHASE_REQUESTS[request_id] = purchase_request
+        # 儲存請購單 - 使用資料管理器
+        data_manager.save_purchase_request(request_id, purchase_request)
 
         return jsonify(
             {
@@ -904,12 +909,14 @@ def create_purchase_request():
 @app.route("/api/purchase-request/<request_id>", methods=["GET"])
 def get_purchase_request(request_id):
     """查詢特定請購單狀態"""
-    if request_id not in PURCHASE_REQUESTS:
+    purchase_request = data_manager.get_purchase_request(request_id)
+    
+    if not purchase_request:
         return jsonify(
             {"status": "error", "message": f"找不到請購單 {request_id}"}
         ), 404
 
-    purchase_request = PURCHASE_REQUESTS[request_id].copy()
+    purchase_request = purchase_request.copy()
 
     # 添加審核軌跡
     purchase_request["approval_trail"] = [
@@ -949,7 +956,8 @@ def get_all_purchase_requests():
     department = request.args.get("department")
     status = request.args.get("status")
 
-    filtered_requests = list(PURCHASE_REQUESTS.values())
+    all_requests = data_manager.get_all_purchase_requests()
+    filtered_requests = list(all_requests.values())
 
     # 根據申請人篩選
     if requester:
@@ -1051,8 +1059,8 @@ def create_purchase_order():
             "tracking_number": f"TRK-{order_id}",
         }
 
-        # 儲存採購單
-        PURCHASE_ORDERS[order_id] = purchase_order
+        # 儲存採購單 - 使用資料管理器
+        data_manager.save_purchase_order(order_id, purchase_order)
 
         return jsonify(
             {
@@ -1070,12 +1078,12 @@ def create_purchase_order():
 @app.route("/api/purchase-order/<order_id>", methods=["GET"])
 def get_purchase_order(order_id):
     """查詢特定採購單資訊"""
-    if order_id not in PURCHASE_ORDERS:
+    purchase_order = data_manager.get_purchase_order(order_id)
+    
+    if not purchase_order:
         return jsonify(
             {"status": "error", "message": f"找不到採購單 {order_id}"}
         ), 404
-
-    purchase_order = PURCHASE_ORDERS[order_id]
 
     return jsonify(
         {"status": "success", "message": "成功取得採購單資訊", "data": purchase_order}
@@ -1089,7 +1097,8 @@ def get_all_purchase_orders():
     supplier = request.args.get("supplier")
     status = request.args.get("status")
 
-    filtered_orders = list(PURCHASE_ORDERS.values())
+    all_orders = data_manager.get_all_purchase_orders()
+    filtered_orders = list(all_orders.values())
 
     # 根據供應商篩選
     if supplier:
@@ -1117,13 +1126,13 @@ def get_all_purchase_orders():
 def create_purchase_order_from_request(request_id):
     """根據請購單創建採購單"""
     try:
-        # 檢查請購單是否存在
-        if request_id not in PURCHASE_REQUESTS:
+        # 檢查請購單是否存在 - 使用資料管理器
+        purchase_request = data_manager.get_purchase_request(request_id)
+        
+        if not purchase_request:
             return jsonify(
                 {"status": "error", "message": f"找不到請購單 {request_id}"}
             ), 404
-
-        purchase_request = PURCHASE_REQUESTS[request_id]
 
         # 檢查請購單狀態是否為"待審核"
         if purchase_request["status"] != "待審核":
@@ -1202,13 +1211,19 @@ def create_purchase_order_from_request(request_id):
             },
         }
 
-        # 儲存採購單
-        PURCHASE_ORDERS[order_id] = purchase_order
+        # 儲存採購單 - 使用資料管理器
+        data_manager.save_purchase_order(order_id, purchase_order)
 
-        # 更新請購單狀態為"已完成"
-        PURCHASE_REQUESTS[request_id]["status"] = "已完成"
-        PURCHASE_REQUESTS[request_id]["completion_date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        PURCHASE_REQUESTS[request_id]["related_order_id"] = order_id
+        # 更新請購單狀態為"已完成" - 使用資料管理器
+        updates = {
+            "status": "已完成",
+            "completion_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "related_order_id": order_id
+        }
+        data_manager.update_purchase_request(request_id, updates)
+        
+        # 取得更新後的請購單
+        updated_request = data_manager.get_purchase_request(request_id)
 
         return jsonify(
             {
@@ -1218,7 +1233,7 @@ def create_purchase_order_from_request(request_id):
                 "request_id": request_id,
                 "data": {
                     "purchase_order": purchase_order,
-                    "updated_request": PURCHASE_REQUESTS[request_id]
+                    "updated_request": updated_request
                 }
             }
         ), 201

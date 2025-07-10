@@ -16,14 +16,14 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
     volumes:
-      # 如果需要持久化資料，可以取消註解下面的行
-      # - ./data:/app/data
+      # 數據持久化 - 儲存請購單和採購單資料
+      - ./data:/app/data
       - ./logs:/app/logs
     restart: unless-stopped
     networks:
       - sap-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7777/"]
+      test: ["CMD", "curl", "-f", "http://localhost:12000/"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -39,5 +39,7 @@ networks:
     driver: bridge
 
 volumes:
+  data:
+    driver: local
   logs:
     driver: local
