@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     container_name: sap-ai-agent-app
     ports:
-      - "12000:7777"
+      - "12000:12000"
     environment:
       - FLASK_APP=app.py
       - FLASK_ENV=production
